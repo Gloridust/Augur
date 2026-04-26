@@ -36,6 +36,8 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 
 ![setting2](public/demo/Screenshot%202026-04-27%20at%2001.11.38.png)
 
+![setting3](public/demo/Screenshot%202026-04-27%20at%2001.51.52.png)
+
 ## Features · 功能
 
 ### 🔮 Anticipation · 预判
