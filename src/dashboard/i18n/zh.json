@@ -11,7 +11,13 @@
   },
   "search": {
     "placeholder": "在打开的标签里搜索…",
-    "noResults": "没有匹配"
+    "noResults": "没有匹配",
+    "webPlaceholder": "用 {{engine}} 搜索",
+    "engineSwitchHint": "切换搜索引擎",
+    "removeRecent": "从最近搜索中移除",
+    "toSearch": "搜索",
+    "newTab": "在新标签打开",
+    "via": "经由"
   },
   "sections": {
     "suggestions": "智能推荐",

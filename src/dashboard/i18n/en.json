@@ -11,7 +11,13 @@
   },
   "search": {
     "placeholder": "Filter open tabs…",
-    "noResults": "No matches"
+    "noResults": "No matches",
+    "webPlaceholder": "Search with {{engine}}",
+    "engineSwitchHint": "Switch search engine",
+    "removeRecent": "Remove from recent",
+    "toSearch": "to search",
+    "newTab": "in a new tab",
+    "via": "via"
   },
   "sections": {
     "suggestions": "Smart suggestions",

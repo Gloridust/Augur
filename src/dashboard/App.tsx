@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Box, Container, Stack } from '@mui/material';
 import { AppHeader } from './components/AppHeader';
 import { Greeting } from './components/Greeting';
@@ -10,23 +10,14 @@ import { TodayRecap } from './components/TodayRecap';
 import { Insights } from './components/Insights';
 import { Onboarding } from './components/Onboarding';
 import { SettingsDialog } from './components/SettingsDialog';
-import { CommandPalette } from './components/CommandPalette';
 import { Toaster } from './components/Toaster';
-import { useCommandPaletteShortcut } from './hooks/useGlobalShortcut';
 
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-
-  const openPalette = useCallback(() => setPaletteOpen(true), []);
-  useCommandPaletteShortcut(openPalette);
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>
-      <AppHeader
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenPalette={openPalette}
-      />
+      <AppHeader onOpenSettings={() => setSettingsOpen(true)} />
       {/* maxWidth=false so we can opt into a custom 1800px ceiling — the
           default `xl` is 1536px which leaves big empty gutters on 2K+ screens. */}
       <Container
@@ -40,7 +31,8 @@ export default function App() {
       >
         <Stack spacing={{ xs: 3, md: 4 }}>
           {/* Hero: greeting on the left, today's recap on the right (wraps on
-              narrow). Search is in the navbar (⌘K) — no duplicate hero search. */}
+              narrow). The web search lives in the navbar — no duplicate hero
+              search. */}
           <Box
             sx={{
               display: 'grid',
@@ -57,8 +49,7 @@ export default function App() {
           </Box>
 
           {/* Above-the-fold workspace: smart suggestions on the left,
-              currently open tabs on the right. Stack on narrow, side-by-side
-              on lg+. The two columns scroll together. */}
+              currently open tabs (with inline cleanup) on the right. */}
           <Box
             sx={{
               display: 'grid',
@@ -84,11 +75,6 @@ export default function App() {
 
       <Onboarding />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
       <Toaster />
     </Box>
   );

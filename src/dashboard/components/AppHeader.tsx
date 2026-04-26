@@ -1,68 +1,52 @@
 import { useTranslation } from 'react-i18next';
-import {
-  AppBar,
-  Box,
-  Chip,
-  IconButton,
-  Stack,
-  Toolbar,
-  Tooltip,
-} from '@mui/material';
+import { AppBar, Box, IconButton, Toolbar, Tooltip, Typography } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
-import SearchIcon from '@mui/icons-material/Search';
+import { AugurMark } from './AugurMark';
+import { NavSearchBar } from './NavSearchBar';
 
 interface Props {
   onOpenSettings: () => void;
-  onOpenPalette: () => void;
 }
 
-const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
-
-export function AppHeader({ onOpenSettings, onOpenPalette }: Props) {
+export function AppHeader({ onOpenSettings }: Props) {
   const { t } = useTranslation();
-
   return (
     <AppBar position="sticky">
-      <Toolbar sx={{ gap: 1, minHeight: { xs: 48, md: 56 } }}>
-        <Box sx={{ flex: 1 }} />
-
-        <Tooltip title={t('palette.shortcutHint')}>
-          <Chip
-            icon={<SearchIcon fontSize="small" />}
-            onClick={onOpenPalette}
-            label={
-              <Stack direction="row" spacing={0.5} alignItems="center">
-                <span>{t('palette.openCta')}</span>
-                <Box
-                  component="kbd"
-                  sx={{
-                    fontFamily: 'inherit',
-                    fontSize: 11,
-                    px: 0.75,
-                    py: 0.1,
-                    borderRadius: 1,
-                    border: '1px solid var(--mui-palette-divider)',
-                    backgroundColor: 'var(--mui-palette-action-hover)',
-                    color: 'text.secondary',
-                  }}
-                >
-                  {isMac ? '⌘K' : 'Ctrl+K'}
-                </Box>
-              </Stack>
-            }
+      <Toolbar
+        sx={{
+          gap: { xs: 1, md: 2 },
+          minHeight: { xs: 52, md: 60 },
+          px: { xs: 1.5, md: 2.5 },
+        }}
+      >
+        {/* Brand · serif wordmark + coral asterisk so the page has identity
+            without screaming for attention. */}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexShrink: 0,
+            color: 'text.primary',
+          }}
+        >
+          <Box sx={{ color: 'var(--mui-palette-primary-main)', display: 'flex' }}>
+            <AugurMark size={20} />
+          </Box>
+          <Typography
+            variant="h5"
+            component="span"
             sx={{
-              cursor: 'pointer',
-              borderRadius: 999,
-              backgroundColor: 'var(--mui-palette-action-hover)',
-              border: '1px solid var(--mui-palette-divider)',
-              height: 36,
-              px: 1,
-              mr: 0.5,
-              '& .MuiChip-label': { px: 1 },
-              '&:hover': { backgroundColor: 'var(--mui-palette-action-selected)' },
+              fontWeight: 500,
+              letterSpacing: '-0.005em',
+              display: { xs: 'none', sm: 'inline' },
             }}
-          />
-        </Tooltip>
+          >
+            Augur
+          </Typography>
+        </Box>
+
+        <NavSearchBar />
 
         <Tooltip title={t('actions.settings')}>
           <IconButton onClick={onOpenSettings}>
