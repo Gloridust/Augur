@@ -1,15 +1,11 @@
-// Augur brand mark — 2D mirror of the icon.svg "expansion ball".
+// Augur brand mark — 2D mirror of icon.svg's fluff-ball.
 //
-// Mechanical structure: 12 front struts radiate from a central hub, each
-// terminating in a small bead. 6 back struts (offset 15°) sit at half
-// opacity to suggest the far side of a sphere. Long/short alternation in
-// strut length adds the "compressed/expanded" mechanical feel.
-//
-// Single colour input — parent decides the hue. At 16-20px the small
-// back struts disappear into the noise; the 12 front struts + hub + tips
-// remain clearly readable.
-const FRONT_ANGLES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
-const BACK_ANGLES = [15, 75, 135, 195, 255, 315];
+// 48 thin rays radiating from origin at 7.5° intervals, with a 10-step
+// length pattern (76% – 100% of full radius). No core sphere, no tip
+// beads — matches the live MagicBall and the favicon. Single colour,
+// inherited from parent via currentColor.
+const RAY_LENGTH_PATTERN = [1.0, 0.84, 0.92, 0.78, 0.96, 0.86, 0.8, 0.94, 0.88, 0.76];
+const RAY_COUNT = 48;
 
 export function AugurMark({
   size = 28,
@@ -18,6 +14,7 @@ export function AugurMark({
   size?: number;
   color?: string;
 }) {
+  const step = 360 / RAY_COUNT;
   return (
     <svg
       viewBox="0 0 32 32"
@@ -26,53 +23,27 @@ export function AugurMark({
       fill="none"
       aria-hidden
     >
-      <g transform="translate(16 16)">
-        {/* Back struts (faded) */}
-        <g stroke={color} strokeLinecap="round" opacity={0.4}>
-          {BACK_ANGLES.map((a) => (
+      <g
+        transform="translate(16 16)"
+        stroke={color}
+        strokeWidth={1}
+        strokeLinecap="round"
+      >
+        {Array.from({ length: RAY_COUNT }, (_, i) => {
+          const length = 12.5 * RAY_LENGTH_PATTERN[i % RAY_LENGTH_PATTERN.length];
+          const angle = i * step;
+          return (
             <line
-              key={`b-${a}`}
+              key={i}
               x1={0}
               y1={0}
-              x2={11}
+              x2={length}
               y2={0}
-              strokeWidth={1.1}
-              transform={`rotate(${a})`}
+              transform={`rotate(${angle})`}
+              opacity={0.7 + ((i * 37) % 30) / 100}
             />
-          ))}
-        </g>
-        {/* Front struts — alternating lengths for that "Hoberman compressed" feel */}
-        <g stroke={color} strokeLinecap="round">
-          {FRONT_ANGLES.map((a, i) => (
-            <line
-              key={`f-${a}`}
-              x1={0}
-              y1={0}
-              x2={i % 2 === 0 ? 12 : 10.5}
-              y2={0}
-              strokeWidth={1.4}
-              transform={`rotate(${a})`}
-            />
-          ))}
-        </g>
-        {/* Beads at front strut tips. Pre-computed positions for the 12
-            evenly-spaced angles (every 30°). */}
-        <g fill={color}>
-          <circle cx={12} cy={0} r={1.5} />
-          <circle cx={9.1} cy={5.25} r={1.2} />
-          <circle cx={6} cy={10.4} r={1.5} />
-          <circle cx={0} cy={10.5} r={1.2} />
-          <circle cx={-6} cy={10.4} r={1.5} />
-          <circle cx={-9.1} cy={5.25} r={1.2} />
-          <circle cx={-12} cy={0} r={1.5} />
-          <circle cx={-9.1} cy={-5.25} r={1.2} />
-          <circle cx={-6} cy={-10.4} r={1.5} />
-          <circle cx={0} cy={-10.5} r={1.2} />
-          <circle cx={6} cy={-10.4} r={1.5} />
-          <circle cx={9.1} cy={-5.25} r={1.2} />
-        </g>
-        {/* Solid hub */}
-        <circle r={2.7} fill={color} />
+          );
+        })}
       </g>
     </svg>
   );
