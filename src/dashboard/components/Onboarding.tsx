@@ -15,6 +15,7 @@ import LockPersonIcon from '@mui/icons-material/LockPerson';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 import { useDataSummary } from '../hooks/useDataSummary';
 
 const STORAGE_KEY = 'augur:onboarded';
@@ -132,6 +133,11 @@ export function Onboarding() {
             icon={<CleaningServicesIcon />}
             title={t('onboarding.cleanupRow.title')}
             body={t('onboarding.cleanupRow.body')}
+          />
+          <PromiseRow
+            icon={<KeyboardIcon />}
+            title={t('onboarding.shortcutRow.title')}
+            body={t('onboarding.shortcutRow.body')}
           />
           <Box sx={{ pt: 1 }}>
             <Box

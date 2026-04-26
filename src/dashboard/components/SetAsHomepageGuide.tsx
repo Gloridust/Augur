@@ -17,7 +17,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import HomeIcon from '@mui/icons-material/Home';
 import LaunchIcon from '@mui/icons-material/Launch';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import KeyboardIcon from '@mui/icons-material/Keyboard';
 import { dashboardUrl } from '../hooks/useTabs';
 import { toast } from './Toaster';
 
@@ -138,21 +138,26 @@ export function SetAsHomepageGuide() {
         </AccordionDetails>
       </Accordion>
 
-      <Accordion disableGutters elevation={0} sx={{ backgroundColor: 'transparent', '&:before': { display: 'none' } }}>
+      <Accordion
+        disableGutters
+        elevation={0}
+        defaultExpanded
+        sx={{ backgroundColor: 'transparent', '&:before': { display: 'none' } }}
+      >
         <AccordionSummary
           expandIcon={<ExpandMoreIcon />}
           sx={{ px: 0, minHeight: 36, '& .MuiAccordionSummary-content': { my: 0.5 } }}
         >
           <Stack direction="row" spacing={1} alignItems="center">
-            <HelpOutlineIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+            <KeyboardIcon fontSize="small" sx={{ color: 'text.secondary' }} />
             <Typography variant="body2" sx={{ fontWeight: 500 }}>
-              {t('homepage.bottomBarTitle')}
+              {t('homepage.shortcutTitle')}
             </Typography>
           </Stack>
         </AccordionSummary>
         <AccordionDetails sx={{ px: 0, pb: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            {t('homepage.bottomBarBody')}
+            {t('homepage.shortcutBody')}
           </Typography>
         </AccordionDetails>
       </Accordion>

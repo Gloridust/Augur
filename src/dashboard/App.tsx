@@ -10,6 +10,7 @@ import { TodayRecap } from './components/TodayRecap';
 import { PinsRow } from './components/PinsRow';
 import { Insights } from './components/Insights';
 import { Onboarding } from './components/Onboarding';
+import { OracleHint } from './components/OracleHint';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Toaster } from './components/Toaster';
 
@@ -80,6 +81,7 @@ export default function App() {
       </Container>
 
       <Onboarding />
+      <OracleHint />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Toaster />
     </Box>

@@ -196,6 +196,10 @@
       "title": "Cleanup that adapts",
       "body": "Keep / close / snooze each suggestion to teach the model. It stops nagging about pages you always keep."
     },
+    "shortcutRow": {
+      "title": "Open Augur in one keystroke",
+      "body": "Press ⌘T (macOS) or Ctrl+T (Windows / Linux) to open a new tab — Augur loads instantly."
+    },
     "progressTitle": "Learning progress",
     "progressCount": "{{events}} / {{target}} events",
     "progressHint": "Recommendations get sharper after about 50 events.",
@@ -214,8 +218,8 @@
     "startupTitle": "Open it on browser startup",
     "startupBody": "In Chrome's startup settings, choose \"Open a specific page\" and paste the URL above.",
     "openStartupSettings": "Open chrome://settings/onStartup",
-    "bottomBarTitle": "About the \"Augur / Customize Chrome\" strip at the bottom",
-    "bottomBarBody": "That strip is Chrome's own UI — it shows up on every new tab page that's overridden by an extension, and there's no extension API to hide it. It does not affect your data or privacy."
+    "shortcutTitle": "Open Augur with one keystroke",
+    "shortcutBody": "Press ⌘T on macOS or Ctrl+T on Windows / Linux to open a new tab — Augur loads instantly. To jump back to it from any page, ⌘1 / Ctrl+1 cycles through your pinned tabs."
   },
   "settings": {
     "tabGeneral": "General",
