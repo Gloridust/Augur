@@ -1,8 +1,10 @@
 import { Box } from '@mui/material';
 import type { SearchEngine } from '../hooks/useSearchEngine';
 
-// Tiny brand glyph for the search-engine selector. Letter on a colored disk
-// — recognizable but doesn't infringe on logos. Sizes follow the input height.
+// Tiny glyph for the search-engine selector. A letter on a coral disk —
+// follows the Augur theme so the selector reads as part of the UI rather
+// than as third-party branding. Engines are still distinguished by letter
+// (G / b). Sizes follow the input height.
 export function EngineGlyph({
   engine,
   size = 22,
@@ -10,10 +12,7 @@ export function EngineGlyph({
   engine: SearchEngine;
   size?: number;
 }) {
-  const config =
-    engine === 'google'
-      ? { letter: 'G', bg: 'linear-gradient(135deg, #4285F4 0%, #34A853 100%)' }
-      : { letter: 'b', bg: 'linear-gradient(135deg, #008373 0%, #00B5AD 100%)' };
+  const letter = engine === 'google' ? 'G' : 'b';
 
   return (
     <Box
@@ -22,10 +21,11 @@ export function EngineGlyph({
         width: size,
         height: size,
         borderRadius: '50%',
-        background: config.bg,
+        background:
+          'linear-gradient(135deg, var(--mui-palette-primary-main) 0%, var(--mui-palette-primary-dark) 100%)',
         display: 'grid',
         placeItems: 'center',
-        color: '#fff',
+        color: 'var(--mui-palette-primary-contrastText)',
         fontSize: size * 0.55,
         fontWeight: 700,
         lineHeight: 1,
@@ -34,7 +34,7 @@ export function EngineGlyph({
         boxShadow: '0 1px 2px rgba(0,0,0,0.10)',
       }}
     >
-      {config.letter}
+      {letter}
     </Box>
   );
 }

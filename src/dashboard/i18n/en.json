@@ -160,6 +160,27 @@
     "refresh": "Refresh",
     "dismiss": "Dismiss"
   },
+  "ai": {
+    "title": "Augur AI",
+    "subtitle": "On-device · Gemini Nano",
+    "openTooltip": "Augur AI",
+    "placeholder": "Ask anything…",
+    "send": "Send (Enter)",
+    "stop": "Stop",
+    "refresh": "Clear conversation",
+    "welcomeTitle": "Ask anything — it stays on your device",
+    "welcomeBody": "Powered by Chrome's built-in Gemini Nano. No API key, no network calls, no logs leave the browser. Conversations clear automatically after 30 minutes of inactivity.",
+    "unsupportedTitle": "Built-in AI isn't available in this browser",
+    "unsupportedBody": "Augur AI uses Chrome's built-in Prompt API (Chrome 138+ on desktop). Update Chrome or try this on a supported channel.",
+    "unavailableTitle": "Gemini Nano can't run on this device",
+    "unavailableBody": "The on-device model needs ~22 GB of free disk space and a recent GPU. Free up space or check chrome://on-device-internals.",
+    "downloadingBody": "Gemini Nano is downloading to your device. This happens once — future chats are instant and offline.",
+    "statusUnsupported": "Built-in AI isn't available",
+    "statusUnavailable": "Gemini Nano isn't supported here",
+    "statusDownloadable": "First message will download the model",
+    "statusDownloading": "Downloading model · {{progress}}%",
+    "statusChecking": "Checking on-device AI availability…"
+  },
   "pins": {
     "heading": "PINNED",
     "smartSortBadge": "Smart order",

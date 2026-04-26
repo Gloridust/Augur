@@ -3,6 +3,7 @@ import { AppBar, Box, IconButton, Toolbar, Tooltip, Typography } from '@mui/mate
 import SettingsIcon from '@mui/icons-material/Settings';
 import { AugurMark } from './AugurMark';
 import { NavSearchBar } from './NavSearchBar';
+import { AiAssistant } from './AiAssistant';
 
 interface Props {
   onOpenSettings: () => void;
@@ -53,6 +54,8 @@ export function AppHeader({ onOpenSettings }: Props) {
         <Box sx={{ flex: 1 }} />
 
         <NavSearchBar />
+
+        <AiAssistant />
 
         <Tooltip title={t('actions.settings')}>
           <IconButton onClick={onOpenSettings}>

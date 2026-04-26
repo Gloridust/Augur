@@ -154,6 +154,27 @@
     "days_one": "{{count}} 天",
     "days_other": "{{count}} 天"
   },
+  "ai": {
+    "title": "Augur AI",
+    "subtitle": "本地运行 · Gemini Nano",
+    "openTooltip": "Augur AI",
+    "placeholder": "随便问点什么…",
+    "send": "发送（Enter）",
+    "stop": "停止",
+    "refresh": "清空对话",
+    "welcomeTitle": "尽管问，全程本地运行",
+    "welcomeBody": "由 Chrome 内置 Gemini Nano 驱动。无需 API key、不联网、不上传任何记录。30 分钟无新消息会自动清空。",
+    "unsupportedTitle": "当前浏览器不支持内置 AI",
+    "unsupportedBody": "Augur AI 使用 Chrome 138+ 桌面版的 Prompt API。请更新 Chrome 或切换到支持的版本。",
+    "unavailableTitle": "本机不支持运行 Gemini Nano",
+    "unavailableBody": "本地模型需要约 22 GB 可用磁盘和较新的 GPU。可在 chrome://on-device-internals 查看详情。",
+    "downloadingBody": "Gemini Nano 正在下载到本地。只需一次，后续对话立刻可用且完全离线。",
+    "statusUnsupported": "内置 AI 不可用",
+    "statusUnavailable": "本机不支持 Gemini Nano",
+    "statusDownloadable": "首次发送时会下载模型",
+    "statusDownloading": "正在下载模型 · {{progress}}%",
+    "statusChecking": "正在检测本地 AI 可用性…"
+  },
   "actions": {
     "settings": "设置",
     "language": "语言",
