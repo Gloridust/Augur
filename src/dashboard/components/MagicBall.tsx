@@ -85,13 +85,13 @@ export function MagicBall({
       if (raf === 0) raf = requestAnimationFrame(tick);
     };
 
-    // Cursor follow — direction matches mouse motion: cursor moves right
-    // and the ball spins right (its left side comes forward); cursor moves
-    // down and the ball tilts down (its top comes forward).
+    // Cursor follow — cursor right ⇒ ball rotates so its right side comes
+    // toward the viewer (rotateY negative in CSS); cursor down ⇒ ball tilts
+    // down with top forward (rotateX negative).
     const onMove = (e: MouseEvent) => {
       const x = e.clientX / window.innerWidth - 0.5;
       const y = e.clientY / window.innerHeight - 0.5;
-      targetY = x * 140;
+      targetY = -x * 140;
       targetX = -y * 110;
       schedule();
     };
