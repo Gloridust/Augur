@@ -27,6 +27,7 @@ import { exportAllData, wipeAllData } from '../api/recommendations';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
 import { useSmartPinSort } from '../hooks/useSmartPinSort';
+import { useNewTabMode } from '../hooks/useNewTabMode';
 import { ModelDebugPanel } from './ModelDebugPanel';
 import { SetAsHomepageGuide } from './SetAsHomepageGuide';
 
@@ -53,6 +54,7 @@ export function SettingsDialog({ open, onClose }: Props) {
   const [userName, setStoredUserName] = useUserNameField();
   const [userNameDraft, setUserNameDraft] = useState(userName);
   const [smartPinSort, setSmartPinSort] = useSmartPinSort();
+  const [newTabMode, setNewTabMode] = useNewTabMode();
 
   // Re-seed the draft when the dialog opens so it stays consistent with the
   // current saved value (e.g. after a wipe-all that resets the name too).
@@ -182,6 +184,29 @@ export function SettingsDialog({ open, onClose }: Props) {
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
                 {t('homepage.title')}
               </Typography>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography variant="body2">
+                    {t('settings.newTabMode')}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {newTabMode === 'override'
+                      ? t('settings.newTabModeOverrideHint')
+                      : t('settings.newTabModeRedirectHint')}
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={newTabMode === 'override'}
+                  onChange={(_, v) => setNewTabMode(v ? 'override' : 'redirect')}
+                />
+              </Box>
               <SetAsHomepageGuide />
             </Stack>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

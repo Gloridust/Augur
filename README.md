@@ -100,7 +100,15 @@ Then in Chrome / Edge / Brave: · 在 Chrome / Edge / Brave 里：
 2. **Load unpacked** → select `dist/`. · **加载已解压的扩展程序** → 选 `dist/`。
 3. Open a new tab — that's it. · 开个新标签页——搞定。
 
-> **Heads-up:** Augur registers as a `chrome_url_overrides.newtab`. Chrome attaches a small "Augur · Customize Chrome" strip at the bottom of override pages — that strip is part of Chrome's UI and cannot be hidden by any extension. We accept it because it's the only configuration in which Chrome relinquishes omnibox focus to the page after ⌘T, which is what makes the Oracle Hint capsule's keyboard nav work immediately. · **小提示**：Augur 注册为 `chrome_url_overrides.newtab`。Chrome 会在 override 页面底部加一条"Augur · Customize Chrome"小条——它是 Chrome 自己的 UI，任何扩展都无法隐藏。我们接受它的原因：只有在 override 模式下 Chrome 会在 ⌘T 之后把键盘焦点从地址栏移交给页面，灵动岛的左右键导航才能即时生效。
+> **Heads-up:** Augur registers as `chrome_url_overrides.newtab` and ships a tiny page-side router (`public/newtab-router.js`) that runs before React. A toggle in **Settings → General → Homepage** picks the behavior on every ⌘T:
+>
+> - **Off (default)** — router redirects the tab off the override URL; Chrome detaches the "Customize Chrome" footer. Tradeoff: omnibox keeps focus, so Oracle Hint's ←/→ activates only after you click the page or press Tab.
+> - **On** — router stays put. Page claims keyboard focus instantly, but Chrome attaches its "Augur · Customize Chrome" footer (no API can hide it).
+>
+> · **小提示**：Augur 始终注册为 `chrome_url_overrides.newtab`，并附带一个先于 React 运行的页面级路由（`public/newtab-router.js`）。**设置 → 通用 → 主页**的开关决定每次 ⌘T 的行为：
+>
+> - **关闭（默认）**——路由立即把 tab 重定向离开 override URL，Chrome 底部条会自动脱落。代价：地址栏保持焦点，灵动岛 ←/→ 要先点一下页面或按一次 Tab 才会响应。
+> - **开启**——路由不动。页面立刻接管键盘焦点，但 Chrome 会在底部加一条「Customize Chrome」条（无 API 可隐藏）。
 
 ---
 
