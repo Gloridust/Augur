@@ -24,12 +24,15 @@ export default defineManifest({
     'alarms',
     'idle',
   ],
-  // We intentionally do NOT use chrome_url_overrides.newtab — registering a
-  // newtab override permanently attaches Chrome's "Customize Chrome /
-  // extension name" footer strip to that tab, and it cannot be hidden by
-  // JS, redirect, or CSS. Instead, the service worker intercepts new tabs
-  // opened to chrome://newtab/ and redirects them to the dashboard URL via
-  // chrome.tabs.update, which avoids the NTP context entirely.
+  // Register the dashboard as Chrome's newtab override. This is the only way
+  // for the page to claim keyboard focus from the omnibox after ⌘T — Chrome
+  // only relinquishes omnibox focus to override pages, not to regular tabs
+  // we redirect into. The cost is a small "Augur · Customize Chrome" strip
+  // at the bottom that's part of Chrome's UI and cannot be hidden — we
+  // accept it because OracleHint's keyboard nav matters more.
+  chrome_url_overrides: {
+    newtab: 'src/dashboard/index.html',
+  },
   action: {
     default_title: '__MSG_extName__',
     default_icon: {

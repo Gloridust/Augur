@@ -42,9 +42,17 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 
 ### 🔮 Anticipation · 预判
 
+- **Oracle Hint** — when the model is genuinely confident (top candidate ≥ 0.55 calibrated), a Dynamic-Island capsule slides in at the top of the new tab with the three most-likely sites. ←/→ navigates, Enter opens, Esc dismisses, auto-hides after 3 s. · **灵动岛预测**：模型对"你下一步要打开什么"高把握时（top 候选概率 ≥0.55），新标签页顶部会弹出灵动岛胶囊，列出三个最可能的站点。←/→ 切换、Enter 打开、Esc 关闭，3 秒未操作自动消失。
 - **Smart Suggestions** rerank ~80 candidate domains every time the focused tab changes — model considers frecency, time-of-day, day-of-week, recency, embedding similarity to current page, last-24h velocity, and "did I just visit this in the past 30 min". · **智能推荐**每次切换聚焦标签都会对 ~80 个候选域名重排，模型同时看：衰减频次、时段、星期、最近访问、与当前页的嵌入相似度、最近 24 小时访问速度、最近 30 分钟会话上下文。
 - **Pin row** uses the same model — pins reorder by predicted relevance, with a 6-hour cooldown after you drag so manual arrangements stick. · **置顶行**用同一个模型——按预测相关度自动重排，但**手动拖动后 6 小时内冻结**，保证你刚整理好的不被打散。
 - **Cleanup card** flags open tabs you're about to abandon. Three-key feedback (close / stash / keep) trains the model in real time. · **清理卡片**标记你即将放弃的标签。三键反馈（关掉 / 暂存 / 保留）实时训练模型。
+
+### 🪄 Augur AI · 本地 AI 对话
+
+- Magic-wand button in the nav opens a small chat panel powered by Chrome's built-in **Gemini Nano** (Prompt API, Chrome 138+). · 顶栏的魔法棒按钮打开一个小型聊天面板，由 Chrome 内置 **Gemini Nano**（Prompt API，Chrome 138+）驱动。
+- **No API key, no network call, no log leaves the browser** — the model runs on-device. First use triggers a one-time ~2-3 GB download with progress bar. · **无需 API key、不联网、无日志外传**——模型在本机运行。首次使用会触发约 2-3 GB 模型下载，附带进度条，仅一次。
+- **Cross-tab synced** via `chrome.storage.session` — open Augur in two tabs and they share the same conversation in real time, streaming text appears in both. · **跨标签同步**：用 `chrome.storage.session` 存储，开两个 Augur 标签会共享同一段对话，回答流式生成时两边都能看到字一个个出来。
+- Auto-clears after 30 minutes of inactivity (timer anchored to `lastActivity` in storage), or click the refresh icon for an immediate wipe. Stop button aborts an in-flight stream. · 30 分钟无新消息自动清空（基于存储中的 `lastActivity`），也可点刷新图标手动清。流式回答中可点停止。
 
 ### 🗂 Tab management · 标签管理
 
@@ -92,7 +100,7 @@ Then in Chrome / Edge / Brave: · 在 Chrome / Edge / Brave 里：
 2. **Load unpacked** → select `dist/`. · **加载已解压的扩展程序** → 选 `dist/`。
 3. Open a new tab — that's it. · 开个新标签页——搞定。
 
-> **Heads-up:** Chrome attaches a "Customize Chrome / extension name" footer to *any* page registered as a newtab override. Augur dodges that by listening to `chrome.tabs.onCreated` and rewriting `chrome://newtab/` → its dashboard URL via `chrome.tabs.update`. Same convenience, no Chrome footer. · **小提示**：Chrome 给所有"newtab override"的页面强加底部条。Augur 不注册 override，而是用 `chrome.tabs.onCreated` 监听新建的 newtab 并重定向到 dashboard URL，等效但没有那条 footer。
+> **Heads-up:** Augur registers as a `chrome_url_overrides.newtab`. Chrome attaches a small "Augur · Customize Chrome" strip at the bottom of override pages — that strip is part of Chrome's UI and cannot be hidden by any extension. We accept it because it's the only configuration in which Chrome relinquishes omnibox focus to the page after ⌘T, which is what makes the Oracle Hint capsule's keyboard nav work immediately. · **小提示**：Augur 注册为 `chrome_url_overrides.newtab`。Chrome 会在 override 页面底部加一条"Augur · Customize Chrome"小条——它是 Chrome 自己的 UI，任何扩展都无法隐藏。我们接受它的原因：只有在 override 模式下 Chrome 会在 ⌘T 之后把键盘焦点从地址栏移交给页面，灵动岛的左右键导航才能即时生效。
 
 ---
 
@@ -188,6 +196,7 @@ The Beta-Bernoulli bandit per `(domain, reason)` arm makes "you keep ignoring th
 | Persistence | Dexie (IndexedDB) — 7 tables, 4 schema versions |
 | RPC | `chrome.runtime.sendMessage` with a typed `RpcRequest` discriminated union |
 | ML | Hand-rolled online LR · Welford z-score · Beta-Bernoulli Thompson sampling · Skip-gram (32d) · Platt scaling — **no TF.js, no ONNX, no chart library** |
+| Built-in AI | Chrome's Prompt API (`window.LanguageModel`, Chrome 138+) — Gemini Nano on-device, no key, no host permissions, no network |
 | Icons | Resvg (`@resvg/resvg-js`) renders 16 / 32 / 48 / 128 PNGs from one SVG source at build time |
 
 Total bundle: **~600 KB raw / ~180 KB gzipped**, zip ~280 KB. · 总打包：原始 ~600KB / gzip ~180KB，zip ~280KB。
@@ -196,7 +205,9 @@ Total bundle: **~600 KB raw / ~180 KB gzipped**, zip ~280 KB. · 总打包：原
 
 ## Privacy · 隐私
 
-Augur is local-first with one shadow on its conscience: it currently fetches favicons from `https://www.google.com/s2/favicons?…` for sites you've already visited. That's the **only** outbound traffic. Disable it by removing the fallback in `TabWall.tsx` / `Suggestions.tsx`. · Augur 本地优先，唯一的对外网络请求是 `https://www.google.com/s2/favicons?…` 抓取你已经访问过的站点的 favicon。禁掉只需删 `TabWall.tsx` / `Suggestions.tsx` 里的 fallback。
+Augur is local-first with one shadow on its conscience: it currently fetches favicons from `https://www.google.com/s2/favicons?…` for sites you've already visited. That's the **only** outbound traffic from Augur's own code. Disable it by removing the fallback in `TabWall.tsx` / `Suggestions.tsx`. · Augur 本地优先，自身代码唯一的对外网络请求是 `https://www.google.com/s2/favicons?…` 抓取你已经访问过的站点的 favicon。禁掉只需删 `TabWall.tsx` / `Suggestions.tsx` 里的 fallback。
+
+> Augur AI talks to Chrome's built-in Gemini Nano via the on-device Prompt API — prompts and responses never leave the browser. The model itself is downloaded once by Chrome (not by Augur) the first time you use the assistant, and lives in Chrome's own storage afterwards. · Augur AI 通过浏览器的本地 Prompt API 调用内置 Gemini Nano，对话内容不离开浏览器。模型本体由 Chrome（非 Augur）在你首次使用时下载一次，之后存在 Chrome 自己的存储里。
 
 - **No telemetry, no analytics, no error reporting.** · 无埋点、无遥测、无错误上报。
 - **No cloud sync.** Events, model weights, bandit posteriors, embeddings, stash, workspaces, and pins all live in IndexedDB (`augur` database). · 无云同步，全部在 `augur` IndexedDB 数据库里。
@@ -238,8 +249,8 @@ src/
     ├── App.tsx
     ├── api/recommendations.ts        # SW RPC client
     ├── components/
-    │   ├── AppHeader · NavSearchBar · MagicBall · AugurMark
-    │   ├── Greeting · TodayRecap · PinsRow · Suggestions
+    │   ├── AppHeader · NavSearchBar · AiAssistant · MagicBall · AugurMark
+    │   ├── Greeting · TodayRecap · PinsRow · Suggestions · OracleHint
     │   ├── TabWall · InlineCleanupCard · StashSection · WorkspacesSection
     │   ├── Insights · LearningEmptyState · SettingsDialog
     │   ├── ModelDebugPanel · SetAsHomepageGuide · Onboarding · Toaster
@@ -247,6 +258,7 @@ src/
     │   ├── useTabs · usePins · useSmartPinSort
     │   ├── useUserName · useDataSummary · useSearchEngine
     │   ├── useRecentSearches · useSearchSuggestions
+    │   └── useGeminiChat            # Prompt-API + cross-tab storage sync
     └── i18n/{index.ts, en.json, zh.json}
 public/
 ├── _locales/{en,zh_CN}/messages.json # MV3 manifest-level strings
@@ -320,6 +332,8 @@ npm run package
 - Web search bar with engine memory · 引擎记忆搜索栏
 - Paper theme · custom mark · Italiana wordmark · 3D MagicBall · 纸面主题 · 定制 mark · 3D 球
 - Full keyboard nav · ⌘K palette deprecated in favor of inline filters · 全键盘导航
+- Oracle Hint dynamic-island capsule for high-confidence next-tab predictions · 灵动岛风预测胶囊
+- Augur AI: Chrome built-in Gemini Nano chat in the nav, cross-tab synced via `chrome.storage.session`, 30-min idle clear · 顶栏内置 Gemini Nano 对话，跨标签同步 + 30 分钟自动清空
 
 🚧 next ideas · 后续
 
