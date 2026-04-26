@@ -100,15 +100,7 @@ Then in Chrome / Edge / Brave: · 在 Chrome / Edge / Brave 里：
 2. **Load unpacked** → select `dist/`. · **加载已解压的扩展程序** → 选 `dist/`。
 3. Open a new tab — that's it. · 开个新标签页——搞定。
 
-> **Heads-up:** Augur registers as `chrome_url_overrides.newtab` and ships a tiny page-side router (`public/newtab-router.js`) that runs before React. A toggle in **Settings → General → Homepage** picks the behavior on every ⌘T:
->
-> - **Off (default)** — router redirects the tab off the override URL; Chrome detaches the "Customize Chrome" footer. Tradeoff: omnibox keeps focus, so Oracle Hint's ←/→ activates only after you click the page or press Tab.
-> - **On** — router stays put. Page claims keyboard focus instantly, but Chrome attaches its "Augur · Customize Chrome" footer (no API can hide it).
->
-> · **小提示**：Augur 始终注册为 `chrome_url_overrides.newtab`，并附带一个先于 React 运行的页面级路由（`public/newtab-router.js`）。**设置 → 通用 → 主页**的开关决定每次 ⌘T 的行为：
->
-> - **关闭（默认）**——路由立即把 tab 重定向离开 override URL，Chrome 底部条会自动脱落。代价：地址栏保持焦点，灵动岛 ←/→ 要先点一下页面或按一次 Tab 才会响应。
-> - **开启**——路由不动。页面立刻接管键盘焦点，但 Chrome 会在底部加一条「Customize Chrome」条（无 API 可隐藏）。
+> **Heads-up:** Chrome attaches a "Customize Chrome / extension name" footer to *any* page registered as a newtab override, and the role sticks once attached — no JS / redirect / CSS can detach it. Augur dodges that by NOT registering an override and instead listening to `chrome.tabs.onCreated`, rewriting `chrome://newtab/` → its dashboard URL via `chrome.tabs.update` *before* Chrome assigns the newtab role. Same convenience, no Chrome footer. Tradeoff: Chrome's anti-focus-stealing policy holds the omnibox focus on ⌘T, so Oracle Hint's ←/→ keyboard nav only activates after you click anywhere on the page or press Tab once (mouse always works). · **小提示**：Chrome 给所有"newtab override"的页面强制挂底部条，且 newtab 角色一旦标记就摘不掉——JS/重定向/CSS 都不行。Augur 选择**不**注册 override，而是用 `chrome.tabs.onCreated` 在 Chrome 给 tab 标记 newtab 角色**之前**就把 `chrome://newtab/` 改写到 dashboard URL，等效但没有底部条。代价是：⌘T 后地址栏被 Chrome 锁住焦点，**灵动岛**胶囊的左右键要等用户随便点一下页面或按一次 Tab 才会响应（鼠标始终可用）。
 
 ---
 

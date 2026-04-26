@@ -25,16 +25,6 @@ function ApplyColorScheme() {
   return null;
 }
 
-// Strip the `?augurDirect=1` marker the newtab-router added so the URL bar
-// stays clean. The marker is only there to break the override navigation;
-// once we've replaced state, the page behaves like any other extension page.
-if (typeof window !== 'undefined') {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('augurDirect') === '1') {
-    window.history.replaceState({}, '', window.location.pathname);
-  }
-}
-
 const container = document.getElementById('root');
 if (!container) throw new Error('root not found');
 

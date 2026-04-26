@@ -24,23 +24,21 @@ export default defineManifest({
     'alarms',
     'idle',
   ],
-  // We register the dashboard as Chrome's newtab override so the user can
-  // (optionally) keep keyboard focus on the page after ⌘T — that's the only
-  // configuration in which Chrome relinquishes omnibox focus to the override
-  // page. The cost: an "Augur · Customize Chrome" footer strip Chrome
-  // attaches to override pages, with no API to hide it.
+  // We intentionally do NOT use chrome_url_overrides.newtab — registering a
+  // newtab override permanently attaches Chrome's "Customize Chrome /
+  // extension name" footer strip to the tab, and it cannot be hidden by
+  // JS, redirect, or CSS. Once Chrome marks a tab as the newtab, the role
+  // sticks regardless of subsequent same-tab navigations.
   //
-  // To let the user opt out of that footer, `public/newtab-router.js` runs
-  // synchronously before the React bundle. It reads `augur:newTabMode` from
-  // localStorage and, if set to 'redirect' (the default), navigates the tab
-  // to a non-override URL — Chrome then drops the newtab role and the
-  // footer detaches. The cost: focus stays in the omnibox until the user
-  // interacts with the page.
+  // Instead, the service worker intercepts new tabs opened to
+  // chrome://newtab/ and redirects them to the dashboard URL via
+  // chrome.tabs.update — the rewrite happens before Chrome assigns the
+  // newtab role, so no footer ever attaches.
   //
-  // The toggle lives in Settings → General → Homepage.
-  chrome_url_overrides: {
-    newtab: 'src/dashboard/index.html',
-  },
+  // Tradeoff: Chrome's anti-focus-stealing policy holds the omnibox focus
+  // on ⌘T, so OracleHint's ←/→ keyboard nav only kicks in after the user
+  // interacts with the page (click anywhere or press Tab). Mouse always
+  // works.
   action: {
     default_title: '__MSG_extName__',
     default_icon: {

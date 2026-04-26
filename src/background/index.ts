@@ -192,6 +192,31 @@ chrome.action.onClicked.addListener(async () => {
   await chrome.tabs.create({ url: dashboardUrl });
 });
 
+// Newtab interceptor — see manifest comment. Any time Chrome creates a tab
+// pointing at chrome://newtab/, we immediately rewrite it to the dashboard
+// URL. Because the rewrite happens before Chrome assigns the newtab role,
+// the "Customize Chrome / extension name" footer strip never attaches.
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id === undefined) return;
+  const url = tab.url ?? tab.pendingUrl ?? '';
+  if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') {
+    const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
+    chrome.tabs.update(tab.id, { url: dashboardUrl }).catch(() => {
+      /* tab may already be gone */
+    });
+  }
+});
+
+// Safety net: also catch tabs that update INTO chrome://newtab/ later.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url === 'chrome://newtab/' || changeInfo.url === 'chrome://new-tab-page/') {
+    const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
+    chrome.tabs.update(tabId, { url: dashboardUrl }).catch(() => {
+      /* tab may already be gone */
+    });
+  }
+});
+
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.id === undefined || !isTrackable(tab.url)) return;
   const ts = Date.now();
