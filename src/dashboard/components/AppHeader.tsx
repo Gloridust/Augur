@@ -1,21 +1,15 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AppBar,
   Box,
   Chip,
   IconButton,
-  Menu,
-  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
 } from '@mui/material';
-import LanguageIcon from '@mui/icons-material/Language';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SearchIcon from '@mui/icons-material/Search';
-import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
-import { ThemeToggle } from './ThemeToggle';
 
 interface Props {
   onOpenSettings: () => void;
@@ -25,13 +19,7 @@ interface Props {
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 export function AppHeader({ onOpenSettings, onOpenPalette }: Props) {
-  const { t, i18n } = useTranslation();
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-
-  const switchLanguage = (lng: SupportedLanguage) => {
-    void i18n.changeLanguage(lng);
-    setAnchor(null);
-  };
+  const { t } = useTranslation();
 
   return (
     <AppBar position="sticky">
@@ -76,32 +64,8 @@ export function AppHeader({ onOpenSettings, onOpenPalette }: Props) {
           />
         </Tooltip>
 
-        <ThemeToggle />
-
-        <Tooltip title={t('actions.language')}>
-          <IconButton onClick={(e) => setAnchor(e.currentTarget)} sx={{ color: 'text.primary' }}>
-            <LanguageIcon />
-          </IconButton>
-        </Tooltip>
-        <Menu
-          anchorEl={anchor}
-          open={Boolean(anchor)}
-          onClose={() => setAnchor(null)}
-          slotProps={{ paper: { sx: { borderRadius: 3, mt: 1 } } }}
-        >
-          {SUPPORTED_LANGUAGES.map((lng) => (
-            <MenuItem
-              key={lng}
-              selected={i18n.resolvedLanguage === lng}
-              onClick={() => switchLanguage(lng)}
-            >
-              {t(`languages.${lng}`)}
-            </MenuItem>
-          ))}
-        </Menu>
-
         <Tooltip title={t('actions.settings')}>
-          <IconButton onClick={onOpenSettings} sx={{ color: 'text.primary' }}>
+          <IconButton onClick={onOpenSettings}>
             <SettingsIcon />
           </IconButton>
         </Tooltip>

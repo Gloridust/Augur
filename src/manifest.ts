@@ -23,7 +23,6 @@ export default defineManifest({
     'storage',
     'alarms',
     'idle',
-    'identity.email',
   ],
   // We intentionally do NOT use chrome_url_overrides.newtab — registering a
   // newtab override permanently attaches Chrome's "Customize Chrome /

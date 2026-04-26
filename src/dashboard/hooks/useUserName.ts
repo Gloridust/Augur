@@ -1,35 +1,60 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-// Pull a friendly first-name out of the user's email local-part. We do not
-// have access to the user's display name without OAuth, so this is a best
-// effort: turn "ethan.doe@example.com" → "Ethan", "first_last@..." → "First".
-function nameFromEmail(email: string | undefined): string | null {
-  if (!email) return null;
-  const local = email.split('@')[0];
-  if (!local) return null;
-  const first = local.split(/[._-]/)[0] ?? local;
-  if (!first) return null;
-  // Skip purely numeric handles like "12345@gmail" — capitalizing is silly.
-  if (/^\d+$/.test(first)) return null;
-  return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+// User-provided display name. Stored in localStorage rather than read from
+// the Chrome account, because:
+//   1) The identity.email permission is scary on the install dialog and many
+//      users say "no".
+//   2) The user might want to see "Ethan" even when their work account email
+//      starts with a number, or when they're signed out.
+// Setting the name dispatches a custom event so any subscribed component
+// (like Greeting) re-renders without prop drilling.
+
+const STORAGE_KEY = 'augur:userName';
+const EVENT = 'augur:user-name-changed';
+
+function readStored(): string {
+  try {
+    return localStorage.getItem(STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
 }
 
-export function useUserName(): string | null {
-  const [name, setName] = useState<string | null>(null);
+export function useUserName(): string {
+  const [name, setName] = useState<string>(readStored);
 
   useEffect(() => {
-    if (typeof chrome === 'undefined' || !chrome?.identity?.getProfileUserInfo) {
-      return;
-    }
-    try {
-      chrome.identity.getProfileUserInfo((info) => {
-        if (chrome.runtime.lastError) return;
-        if (info?.email) setName(nameFromEmail(info.email));
-      });
-    } catch {
-      // identity API may be unavailable on locked-down browsers; ignore.
-    }
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      setName(detail ?? '');
+    };
+    window.addEventListener(EVENT, handler);
+    return () => window.removeEventListener(EVENT, handler);
   }, []);
 
   return name;
+}
+
+export function setUserName(name: string): void {
+  const trimmed = name.trim();
+  try {
+    if (trimmed) localStorage.setItem(STORAGE_KEY, trimmed);
+    else localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // localStorage may be unavailable; let the event still fire.
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENT, { detail: trimmed }));
+  }
+}
+
+export function getUserName(): string {
+  return readStored();
+}
+
+// A useState-style helper for components that both read and write the value.
+export function useUserNameField(): [string, (next: string) => void] {
+  const stored = useUserName();
+  const set = useCallback((next: string) => setUserName(next), []);
+  return [stored, set];
 }

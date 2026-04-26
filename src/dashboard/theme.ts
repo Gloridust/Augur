@@ -1,59 +1,52 @@
 import { extendTheme } from '@mui/material/styles';
 
-// Augur · Liquid Glass theme
+// Augur · Paper theme
 //
-// Design intent: every visible surface (cards, app bar, dialogs, menus,
-// inputs, chips) is a translucent layer over a soft animated gradient
-// backdrop. The blur + saturate filter does the heavy lifting; we add a
-// thin top-left specular highlight via inset shadow + a hairline edge to
-// suggest light catching the glass curvature.
+// Visual language ported from the Claude desktop app:
+//   - Warm off-white "paper" canvas, slightly tinted sidebars
+//   - Hairline 1px borders instead of glass / shadows
+//   - Coral accent for the brand mark and active state, used sparingly
+//   - Editorial serif for the largest display heading; system sans for body
+//   - Soft, restrained rounding (8 / 12 / 16 — no inflation)
 //
-// What's faked vs real iOS 26:
-//   ✓ Backdrop blur + saturation pickup
-//   ✓ Specular highlight at top edge
-//   ✓ Hairline edge (one device pixel)
-//   ✓ Soft outer drop-shadow at low opacity
-//   ✗ Real-time refraction / lensing under the glass (would need WebGL)
-//   ✗ Shape morph during state transitions (would need View Transitions)
-//
-// All glass surfaces share the same recipe — defining it once here as a
-// component override keeps the look consistent across every MUI primitive.
+// What this theme is NOT: glassmorphism, vibrant gradients, dense color.
+// Everything stays calm and book-like; the orange asterisk does the work
+// of "this is alive".
 
-const SF_FONT_STACK =
-  '"SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif';
+const SANS =
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helvetica, Arial, sans-serif';
+const SERIF =
+  '"Iowan Old Style", "Charter", "Source Serif Pro", "Cambria", Georgia, serif';
 
-// The "glass recipe" — referenced by every surface. Kept as a constant so
-// hover / active / focus variations can layer on top instead of redeclaring.
-const GLASS_BG_LIGHT = 'rgba(255, 255, 255, 0.55)';
-const GLASS_BG_LIGHT_STRONG = 'rgba(255, 255, 255, 0.72)';
-const GLASS_BG_DARK = 'rgba(28, 28, 30, 0.55)';
-const GLASS_BG_DARK_STRONG = 'rgba(40, 40, 44, 0.72)';
+// Coral / terracotta palette used for the brand mark and primary action.
+const CORAL = '#C2410C';
+const CORAL_LIGHT = '#FED7AA';
+const CORAL_DARK = '#9A3412';
+const CORAL_ON_DARK = '#E58660';
 
-const GLASS_BORDER_LIGHT = 'rgba(255, 255, 255, 0.6)';
-const GLASS_BORDER_DARK = 'rgba(255, 255, 255, 0.10)';
+const LIGHT = {
+  bg: '#F5F2EB',           // outer canvas (warm cream)
+  paper: '#FCFAF5',        // cards, dialogs (slightly lighter)
+  paperRaised: '#FFFFFF',  // raised surfaces if needed
+  text: '#1F1E1B',
+  textSecondary: 'rgba(31, 30, 27, 0.62)',
+  divider: 'rgba(31, 30, 27, 0.08)',
+  border: 'rgba(31, 30, 27, 0.10)',
+  hover: 'rgba(31, 30, 27, 0.05)',
+  selected: 'rgba(31, 30, 27, 0.08)',
+};
 
-const GLASS_HIGHLIGHT_LIGHT = 'rgba(255, 255, 255, 0.85)';
-const GLASS_HIGHLIGHT_DARK = 'rgba(255, 255, 255, 0.16)';
-
-const GLASS_SHADOW_LIGHT =
-  '0 1px 2px rgba(28, 28, 30, 0.05), 0 8px 28px rgba(28, 28, 30, 0.08)';
-const GLASS_SHADOW_DARK =
-  '0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 40px rgba(0, 0, 0, 0.45)';
-
-// Common backdrop-filter — `saturate(180%)` gives the iOS pickup effect where
-// the glass intensifies the colour of whatever sits behind it.
-const GLASS_BLUR = 'saturate(180%) blur(28px)';
-
-const glassSurface = (mode: 'light' | 'dark') => ({
-  backgroundColor: mode === 'light' ? GLASS_BG_LIGHT : GLASS_BG_DARK,
-  backdropFilter: GLASS_BLUR,
-  WebkitBackdropFilter: GLASS_BLUR,
-  // Hairline border + inner top highlight to hint at curvature.
-  border: `0.5px solid ${mode === 'light' ? GLASS_BORDER_LIGHT : GLASS_BORDER_DARK}`,
-  boxShadow: `inset 0 1px 0 ${mode === 'light' ? GLASS_HIGHLIGHT_LIGHT : GLASS_HIGHLIGHT_DARK}, ${
-    mode === 'light' ? GLASS_SHADOW_LIGHT : GLASS_SHADOW_DARK
-  }`,
-});
+const DARK = {
+  bg: '#1B1815',
+  paper: '#262220',
+  paperRaised: '#2D2925',
+  text: '#F1ECE2',
+  textSecondary: 'rgba(241, 236, 226, 0.62)',
+  divider: 'rgba(241, 236, 226, 0.08)',
+  border: 'rgba(241, 236, 226, 0.12)',
+  hover: 'rgba(241, 236, 226, 0.06)',
+  selected: 'rgba(241, 236, 226, 0.10)',
+};
 
 export const theme = extendTheme({
   cssVarPrefix: 'mui',
@@ -61,135 +54,108 @@ export const theme = extendTheme({
     light: {
       palette: {
         primary: {
-          main: '#7C3AED',
-          light: '#C4B5FD',
-          dark: '#5B21B6',
+          main: CORAL,
+          light: CORAL_LIGHT,
+          dark: CORAL_DARK,
           contrastText: '#FFFFFF',
         },
-        secondary: {
-          main: '#0EA5E9',
-          light: '#BAE6FD',
-          dark: '#0369A1',
-          contrastText: '#FFFFFF',
-        },
-        background: {
-          // Base sits behind the gradient mesh that styles.css paints.
-          default: '#F4F0FA',
-          paper: GLASS_BG_LIGHT_STRONG,
-        },
-        text: {
-          primary: '#1B1530',
-          secondary: 'rgba(27, 21, 48, 0.62)',
-        },
-        divider: 'rgba(27, 21, 48, 0.08)',
-        warning: { main: '#D97706' },
-        error: { main: '#DC2626' },
-        success: { main: '#059669' },
+        secondary: { main: '#3E5C76', contrastText: '#FFFFFF' },
+        background: { default: LIGHT.bg, paper: LIGHT.paper },
+        text: { primary: LIGHT.text, secondary: LIGHT.textSecondary },
+        divider: LIGHT.divider,
+        warning: { main: '#B45309' },
+        error: { main: '#B91C1C' },
+        success: { main: '#15803D' },
       },
     },
     dark: {
       palette: {
         primary: {
-          main: '#A78BFA',
-          light: '#1E1B3A',
-          dark: '#DDD6FE',
-          contrastText: '#1B1530',
+          main: CORAL_ON_DARK,
+          light: '#3D1F0E',
+          dark: CORAL_LIGHT,
+          contrastText: '#1B1815',
         },
-        secondary: {
-          main: '#38BDF8',
-          light: '#082F49',
-          dark: '#BAE6FD',
-          contrastText: '#062B43',
-        },
-        background: {
-          default: '#0E0B1F',
-          paper: GLASS_BG_DARK_STRONG,
-        },
-        text: {
-          primary: '#F4F0FA',
-          secondary: 'rgba(244, 240, 250, 0.65)',
-        },
-        divider: 'rgba(244, 240, 250, 0.10)',
+        secondary: { main: '#94B1C9', contrastText: '#1B1815' },
+        background: { default: DARK.bg, paper: DARK.paper },
+        text: { primary: DARK.text, secondary: DARK.textSecondary },
+        divider: DARK.divider,
         warning: { main: '#FBBF24' },
         error: { main: '#F87171' },
         success: { main: '#34D399' },
       },
     },
   },
-  shape: { borderRadius: 18 },
+  // Tame radius scale — Claude leans on hairlines + whitespace, not big curves.
+  // pill = 999 · 2xl = 16 (Dialog) · xl = 12 (Card) · lg = 10 (Menu/Input)
+  // md = 8 (Toggle, Chip) · sm = 6 (MenuItem) · xs = 4 (Heatmap, micro)
+  shape: { borderRadius: 12 },
   typography: {
-    fontFamily: SF_FONT_STACK,
-    h1: { fontSize: '3.25rem', fontWeight: 600, letterSpacing: '-0.025em' },
-    h2: { fontSize: '2.25rem', fontWeight: 600, letterSpacing: '-0.02em' },
-    h3: { fontSize: '1.75rem', fontWeight: 600, letterSpacing: '-0.015em' },
-    h4: { fontSize: '1.4rem', fontWeight: 600, letterSpacing: '-0.01em' },
-    h5: { fontSize: '1.15rem', fontWeight: 600 },
-    h6: { fontSize: '1rem', fontWeight: 600 },
-    body1: { fontSize: '0.95rem', lineHeight: 1.5 },
-    body2: { fontSize: '0.85rem', lineHeight: 1.45 },
-    button: { textTransform: 'none', fontWeight: 600, letterSpacing: 0 },
-    caption: { fontSize: '0.75rem' },
+    fontFamily: SANS,
+    // Display headings use the editorial serif. Body sticks to the system sans.
+    h1: {
+      fontFamily: SERIF,
+      fontSize: '2.75rem',
+      fontWeight: 400,
+      lineHeight: 1.1,
+      letterSpacing: '-0.015em',
+    },
+    h2: {
+      fontFamily: SERIF,
+      fontSize: '2.125rem',
+      fontWeight: 400,
+      lineHeight: 1.15,
+      letterSpacing: '-0.01em',
+    },
+    h3: {
+      fontFamily: SERIF,
+      fontSize: '1.625rem',
+      fontWeight: 500,
+      lineHeight: 1.2,
+    },
+    h4: { fontSize: '1.25rem', fontWeight: 600, letterSpacing: '-0.005em' },
+    h5: { fontSize: '1.05rem', fontWeight: 600 },
+    h6: { fontSize: '0.95rem', fontWeight: 600 },
+    body1: { fontSize: '0.95rem', lineHeight: 1.55 },
+    body2: { fontSize: '0.85rem', lineHeight: 1.5 },
+    button: { textTransform: 'none', fontWeight: 500, letterSpacing: 0 },
+    caption: { fontSize: '0.75rem', lineHeight: 1.4 },
   },
   components: {
-    MuiCssBaseline: {
-      styleOverrides: {
-        body: {
-          // The animated gradient mesh that gives the glass something to
-          // refract. Defined here so it survives MUI's CssBaseline reset.
-          backgroundColor: 'var(--mui-palette-background-default)',
-        },
-      },
-    },
     MuiButton: {
-      defaultProps: { disableElevation: true, disableRipple: false },
+      defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: ({ theme: t }) => ({
+        root: {
           borderRadius: 999,
-          paddingInline: 22,
-          paddingBlock: 9,
-          minHeight: 36,
-          fontWeight: 600,
-          letterSpacing: 0,
-          backdropFilter: GLASS_BLUR,
-          WebkitBackdropFilter: GLASS_BLUR,
+          paddingInline: 16,
+          paddingBlock: 6,
+          minHeight: 32,
+          fontWeight: 500,
+          boxShadow: 'none',
           transition:
-            'transform 200ms cubic-bezier(0.2, 0, 0, 1), background-color 200ms cubic-bezier(0.2, 0, 0, 1), box-shadow 200ms cubic-bezier(0.2, 0, 0, 1)',
-          '&:hover': { transform: 'translateY(-0.5px)' },
-          '&:active': { transform: 'translateY(0.5px)' },
-          // Mode-aware overrides
-          ...t.applyStyles('light', {}),
-        }),
-        contained: ({ theme: t }) => ({
-          boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), ${GLASS_SHADOW_LIGHT}`,
-          ...t.applyStyles('dark', {
-            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.18), ${GLASS_SHADOW_DARK}`,
-          }),
-        }),
+            'background-color 150ms ease, color 150ms ease, border-color 150ms ease',
+          '&:hover': { boxShadow: 'none' },
+        },
         outlined: ({ theme: t }) => ({
-          backgroundColor: GLASS_BG_LIGHT,
-          border: `0.5px solid ${GLASS_BORDER_LIGHT}`,
+          borderColor: LIGHT.border,
           color: 'var(--mui-palette-text-primary)',
           '&:hover': {
-            backgroundColor: GLASS_BG_LIGHT_STRONG,
-            border: `0.5px solid ${GLASS_BORDER_LIGHT}`,
+            backgroundColor: LIGHT.hover,
+            borderColor: LIGHT.border,
           },
           ...t.applyStyles('dark', {
-            backgroundColor: GLASS_BG_DARK,
-            border: `0.5px solid ${GLASS_BORDER_DARK}`,
+            borderColor: DARK.border,
             '&:hover': {
-              backgroundColor: GLASS_BG_DARK_STRONG,
-              border: `0.5px solid ${GLASS_BORDER_DARK}`,
+              backgroundColor: DARK.hover,
+              borderColor: DARK.border,
             },
           }),
         }),
         text: ({ theme: t }) => ({
-          backdropFilter: 'none',
-          WebkitBackdropFilter: 'none',
-          '&:hover': {
-            backgroundColor: 'rgba(124, 58, 237, 0.08)',
-          },
+          color: 'var(--mui-palette-text-primary)',
+          '&:hover': { backgroundColor: LIGHT.hover },
           ...t.applyStyles('dark', {
-            '&:hover': { backgroundColor: 'rgba(167, 139, 250, 0.10)' },
+            '&:hover': { backgroundColor: DARK.hover },
           }),
         }),
       },
@@ -197,13 +163,11 @@ export const theme = extendTheme({
     MuiIconButton: {
       styleOverrides: {
         root: ({ theme: t }) => ({
-          borderRadius: 12,
-          transition: 'background-color 200ms cubic-bezier(0.2, 0, 0, 1)',
-          '&:hover': {
-            backgroundColor: 'rgba(27, 21, 48, 0.06)',
-          },
+          borderRadius: 8,
+          color: 'var(--mui-palette-text-primary)',
+          '&:hover': { backgroundColor: LIGHT.hover },
           ...t.applyStyles('dark', {
-            '&:hover': { backgroundColor: 'rgba(244, 240, 250, 0.08)' },
+            '&:hover': { backgroundColor: DARK.hover },
           }),
         }),
       },
@@ -212,12 +176,16 @@ export const theme = extendTheme({
       defaultProps: { elevation: 0 },
       styleOverrides: {
         root: ({ theme: t }) => ({
-          borderRadius: 20,
+          borderRadius: 12,
           backgroundImage: 'none',
-          ...glassSurface('light'),
-          ...t.applyStyles('dark', glassSurface('dark')),
-          transition:
-            'background-color 220ms cubic-bezier(0.2, 0, 0, 1), border-color 220ms cubic-bezier(0.2, 0, 0, 1), transform 220ms cubic-bezier(0.2, 0, 0, 1)',
+          backgroundColor: LIGHT.paper,
+          border: `1px solid ${LIGHT.border}`,
+          boxShadow: 'none',
+          transition: 'background-color 150ms ease, border-color 150ms ease',
+          ...t.applyStyles('dark', {
+            backgroundColor: DARK.paper,
+            border: `1px solid ${DARK.border}`,
+          }),
         }),
       },
     },
@@ -231,15 +199,15 @@ export const theme = extendTheme({
       defaultProps: { elevation: 0, color: 'transparent' },
       styleOverrides: {
         root: ({ theme: t }) => ({
-          backgroundColor: 'rgba(244, 240, 250, 0.55)',
-          backdropFilter: GLASS_BLUR,
-          WebkitBackdropFilter: GLASS_BLUR,
-          borderBottom: `0.5px solid ${GLASS_BORDER_LIGHT}`,
-          boxShadow: 'none',
+          backgroundColor: 'rgba(245, 242, 235, 0.85)',
+          backdropFilter: 'saturate(140%) blur(14px)',
+          WebkitBackdropFilter: 'saturate(140%) blur(14px)',
+          borderBottom: `1px solid ${LIGHT.divider}`,
           color: 'var(--mui-palette-text-primary)',
+          boxShadow: 'none',
           ...t.applyStyles('dark', {
-            backgroundColor: 'rgba(14, 11, 31, 0.55)',
-            borderBottom: `0.5px solid ${GLASS_BORDER_DARK}`,
+            backgroundColor: 'rgba(27, 24, 21, 0.85)',
+            borderBottom: `1px solid ${DARK.divider}`,
           }),
         }),
       },
@@ -247,20 +215,60 @@ export const theme = extendTheme({
     MuiDialog: {
       styleOverrides: {
         paper: ({ theme: t }) => ({
-          borderRadius: 28,
+          borderRadius: 16,
           backgroundImage: 'none',
-          ...glassSurface('light'),
-          ...t.applyStyles('dark', glassSurface('dark')),
+          backgroundColor: LIGHT.paper,
+          border: `1px solid ${LIGHT.border}`,
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.10)',
+          ...t.applyStyles('dark', {
+            backgroundColor: DARK.paper,
+            border: `1px solid ${DARK.border}`,
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+          }),
         }),
       },
     },
     MuiMenu: {
+      defaultProps: { slotProps: { list: { sx: { p: 0.5 } } } },
       styleOverrides: {
         paper: ({ theme: t }) => ({
-          borderRadius: 14,
+          borderRadius: 10,
           backgroundImage: 'none',
-          ...glassSurface('light'),
-          ...t.applyStyles('dark', glassSurface('dark')),
+          backgroundColor: LIGHT.paper,
+          border: `1px solid ${LIGHT.border}`,
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+          ...t.applyStyles('dark', {
+            backgroundColor: DARK.paper,
+            border: `1px solid ${DARK.border}`,
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+          }),
+        }),
+      },
+    },
+    MuiMenuItem: {
+      styleOverrides: {
+        root: ({ theme: t }) => ({
+          marginInline: 4,
+          marginBlock: 1,
+          paddingInline: 10,
+          paddingBlock: 6,
+          borderRadius: 6,
+          fontSize: '0.875rem',
+          minHeight: 32,
+          '&:hover': { backgroundColor: LIGHT.hover },
+          '&.Mui-selected': {
+            backgroundColor: 'rgba(194, 65, 12, 0.10)',
+            color: CORAL,
+            '&:hover': { backgroundColor: 'rgba(194, 65, 12, 0.16)' },
+          },
+          ...t.applyStyles('dark', {
+            '&:hover': { backgroundColor: DARK.hover },
+            '&.Mui-selected': {
+              backgroundColor: 'rgba(229, 134, 96, 0.16)',
+              color: CORAL_ON_DARK,
+              '&:hover': { backgroundColor: 'rgba(229, 134, 96, 0.24)' },
+            },
+          }),
         }),
       },
     },
@@ -268,44 +276,58 @@ export const theme = extendTheme({
       styleOverrides: {
         paper: ({ theme: t }) => ({
           backgroundImage: 'none',
-          ...glassSurface('light'),
-          ...t.applyStyles('dark', glassSurface('dark')),
+          backgroundColor: LIGHT.paper,
+          border: `1px solid ${LIGHT.border}`,
+          boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
+          ...t.applyStyles('dark', {
+            backgroundColor: DARK.paper,
+            border: `1px solid ${DARK.border}`,
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
+          }),
         }),
       },
     },
     MuiTooltip: {
       styleOverrides: {
         tooltip: {
-          borderRadius: 10,
+          borderRadius: 6,
+          backgroundColor: 'rgba(31, 30, 27, 0.92)',
+          color: '#FCFAF5',
           fontSize: '0.75rem',
-          paddingBlock: 6,
-          paddingInline: 10,
-          backgroundColor: 'rgba(27, 21, 48, 0.85)',
-          backdropFilter: 'blur(12px)',
+          paddingBlock: 5,
+          paddingInline: 9,
         },
+        arrow: { color: 'rgba(31, 30, 27, 0.92)' },
       },
     },
     MuiChip: {
       styleOverrides: {
         root: ({ theme: t }) => ({
-          borderRadius: 10,
+          borderRadius: 6,
           fontWeight: 500,
-          backgroundColor: 'rgba(255, 255, 255, 0.6)',
-          backdropFilter: GLASS_BLUR,
-          border: `0.5px solid ${GLASS_BORDER_LIGHT}`,
+          fontSize: '0.75rem',
+          height: 24,
+          backgroundColor: 'rgba(31, 30, 27, 0.06)',
+          color: 'var(--mui-palette-text-primary)',
           ...t.applyStyles('dark', {
-            backgroundColor: 'rgba(40, 40, 44, 0.55)',
-            border: `0.5px solid ${GLASS_BORDER_DARK}`,
+            backgroundColor: 'rgba(241, 236, 226, 0.08)',
           }),
         }),
-        filled: {
-          // Filled chips (e.g. "selected") keep a solid look.
-          backdropFilter: 'none',
-        },
         outlined: ({ theme: t }) => ({
           backgroundColor: 'transparent',
-          backdropFilter: 'none',
-          ...t.applyStyles('dark', { backgroundColor: 'transparent' }),
+          borderColor: LIGHT.border,
+          ...t.applyStyles('dark', { borderColor: DARK.border }),
+        }),
+        filled: {
+          // Coral chip for "selected" emphasis
+        },
+        colorPrimary: ({ theme: t }) => ({
+          backgroundColor: 'rgba(194, 65, 12, 0.10)',
+          color: CORAL,
+          ...t.applyStyles('dark', {
+            backgroundColor: 'rgba(229, 134, 96, 0.18)',
+            color: CORAL_ON_DARK,
+          }),
         }),
       },
     },
@@ -313,13 +335,12 @@ export const theme = extendTheme({
       styleOverrides: {
         root: ({ theme: t }) => ({
           padding: 2,
-          borderRadius: 999,
-          backgroundColor: 'rgba(255, 255, 255, 0.5)',
-          backdropFilter: GLASS_BLUR,
-          border: `0.5px solid ${GLASS_BORDER_LIGHT}`,
+          borderRadius: 8,
+          backgroundColor: 'rgba(31, 30, 27, 0.05)',
+          border: `1px solid ${LIGHT.border}`,
           ...t.applyStyles('dark', {
-            backgroundColor: 'rgba(40, 40, 44, 0.45)',
-            border: `0.5px solid ${GLASS_BORDER_DARK}`,
+            backgroundColor: 'rgba(241, 236, 226, 0.05)',
+            border: `1px solid ${DARK.border}`,
           }),
         }),
       },
@@ -331,16 +352,51 @@ export const theme = extendTheme({
           color: 'var(--mui-palette-text-secondary)',
           textTransform: 'none',
           fontWeight: 500,
+          borderRadius: '6px !important',
+          paddingInline: 10,
+          paddingBlock: 4,
+          fontSize: 12,
+          minHeight: 0,
           '&.Mui-selected': {
-            backgroundColor: 'rgba(255, 255, 255, 0.85) !important',
+            backgroundColor: '#FCFAF5',
             color: 'var(--mui-palette-text-primary)',
-            boxShadow: GLASS_SHADOW_LIGHT,
+            boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
           },
           ...t.applyStyles('dark', {
             '&.Mui-selected': {
-              backgroundColor: 'rgba(60, 60, 65, 0.85) !important',
+              backgroundColor: 'rgba(241, 236, 226, 0.10)',
               color: 'var(--mui-palette-text-primary)',
-              boxShadow: GLASS_SHADOW_DARK,
+              boxShadow: 'none',
+            },
+          }),
+        }),
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: ({ theme: t }) => ({
+          borderRadius: 10,
+          backgroundColor: LIGHT.paper,
+          '& .MuiOutlinedInput-notchedOutline': {
+            borderColor: LIGHT.border,
+          },
+          '&:hover .MuiOutlinedInput-notchedOutline': {
+            borderColor: 'rgba(31, 30, 27, 0.20)',
+          },
+          '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+            borderColor: CORAL,
+            borderWidth: 1,
+          },
+          ...t.applyStyles('dark', {
+            backgroundColor: DARK.paper,
+            '& .MuiOutlinedInput-notchedOutline': {
+              borderColor: DARK.border,
+            },
+            '&:hover .MuiOutlinedInput-notchedOutline': {
+              borderColor: 'rgba(241, 236, 226, 0.20)',
+            },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderColor: CORAL_ON_DARK,
             },
           }),
         }),
@@ -349,67 +405,52 @@ export const theme = extendTheme({
     MuiSelect: {
       styleOverrides: {
         outlined: ({ theme: t }) => ({
-          borderRadius: 14,
-          backgroundColor: 'rgba(255, 255, 255, 0.5)',
-          backdropFilter: GLASS_BLUR,
-          ...t.applyStyles('dark', {
-            backgroundColor: 'rgba(40, 40, 44, 0.45)',
-          }),
+          backgroundColor: LIGHT.paper,
+          ...t.applyStyles('dark', { backgroundColor: DARK.paper }),
         }),
-      },
-    },
-    MuiOutlinedInput: {
-      styleOverrides: {
-        root: ({ theme: t }) => ({
-          borderRadius: 14,
-          backgroundColor: 'rgba(255, 255, 255, 0.5)',
-          backdropFilter: GLASS_BLUR,
-          '& .MuiOutlinedInput-notchedOutline': {
-            borderColor: GLASS_BORDER_LIGHT,
-            borderWidth: '0.5px !important',
-          },
-          ...t.applyStyles('dark', {
-            backgroundColor: 'rgba(40, 40, 44, 0.45)',
-            '& .MuiOutlinedInput-notchedOutline': {
-              borderColor: GLASS_BORDER_DARK,
-            },
-          }),
-        }),
-      },
-    },
-    MuiCheckbox: {
-      styleOverrides: {
-        root: { borderRadius: 6 },
       },
     },
     MuiTabs: {
       styleOverrides: {
         indicator: {
-          height: 3,
-          borderRadius: 999,
+          height: 2,
+          borderRadius: 1,
+          backgroundColor: CORAL,
         },
       },
     },
     MuiTab: {
       styleOverrides: {
-        root: { textTransform: 'none', fontWeight: 600, minHeight: 40 },
+        root: {
+          textTransform: 'none',
+          fontWeight: 500,
+          minHeight: 36,
+          fontSize: '0.875rem',
+          '&.Mui-selected': { color: CORAL },
+        },
       },
     },
     MuiAlert: {
       styleOverrides: {
-        root: ({ theme: t }) => ({
-          borderRadius: 14,
-          backdropFilter: GLASS_BLUR,
-          ...t.applyStyles('dark', {}),
-        }),
+        root: { borderRadius: 8 },
       },
     },
     MuiSnackbarContent: {
       styleOverrides: {
+        root: { borderRadius: 999 },
+      },
+    },
+    MuiCheckbox: {
+      styleOverrides: {
+        root: { borderRadius: 4, padding: 4 },
+      },
+    },
+    MuiLinearProgress: {
+      styleOverrides: {
         root: {
-          borderRadius: 999,
-          backdropFilter: GLASS_BLUR,
+          backgroundColor: 'rgba(31, 30, 27, 0.08)',
         },
+        bar: { backgroundColor: CORAL },
       },
     },
   },

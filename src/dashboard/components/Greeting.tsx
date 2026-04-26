@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Box, Typography } from '@mui/material';
+import { AugurMark } from './AugurMark';
 import { useUserName } from '../hooks/useUserName';
 
 function timeBucket(hour: number): 'morning' | 'afternoon' | 'evening' | 'night' {
@@ -26,27 +27,37 @@ export function Greeting() {
       })
     : t(`greeting.${bucket}`);
   return (
-    <Box>
-      <Typography
-        component="h1"
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1.5, md: 2 } }}>
+      <Box
         sx={{
-          fontWeight: 500,
-          fontSize: { xs: '1.75rem', md: '2rem' },
-          lineHeight: 1.1,
-          letterSpacing: '-0.01em',
+          color: 'var(--mui-palette-primary-main)',
+          flexShrink: 0,
+          mt: { xs: 0.25, md: 0.5 },
         }}
       >
-        {greeting}
-      </Typography>
-      <Typography
-        sx={{
-          fontSize: 13,
-          color: 'text.secondary',
-          mt: 0.5,
-        }}
-      >
-        {dateFmt.format(now)}
-      </Typography>
+        <AugurMark size={28} />
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography
+          component="h1"
+          variant="h2"
+          sx={{
+            fontSize: { xs: '1.875rem', md: '2.25rem' },
+            lineHeight: 1.05,
+          }}
+        >
+          {greeting}
+        </Typography>
+        <Typography
+          sx={{
+            fontSize: 13,
+            color: 'text.secondary',
+            mt: 0.75,
+          }}
+        >
+          {dateFmt.format(now)}
+        </Typography>
+      </Box>
     </Box>
   );
 }

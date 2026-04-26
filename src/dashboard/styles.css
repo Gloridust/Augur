@@ -1,11 +1,8 @@
 /* Augur · global styles
  *
- * The gradient-mesh backdrop is the single most important piece of the
- * Liquid Glass aesthetic: without something colourful behind, backdrop-filter
- * has nothing to refract and every glass surface collapses to a flat gray.
- * We paint three large radial blobs with low opacity, animate their hue
- * subtly so the dashboard never feels static, and let the glass do its work
- * on top.
+ * Paper-aesthetic: warm cream canvas, no gradient mesh, no animated blobs.
+ * Coral is reserved for the brand mark and primary action; everything else
+ * stays in the warm-paper / charcoal palette.
  */
 
 html,
@@ -18,123 +15,39 @@ body,
 
 body {
   font-family:
-    'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Inter',
-    'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-  font-feature-settings: 'cv11', 'ss01';
+    system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter',
+    Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: var(--mui-palette-text-primary);
-
-  /* The actual gradient mesh. Three radial blobs in soft brand-adjacent
-   * hues + a subtle linear undertone. The colours below are tuned for the
-   * light scheme; the dark mode override is applied via the
-   * data-mui-color-scheme attribute the CssVarsProvider sets on <html>. */
   background-color: var(--mui-palette-background-default);
-  background-image:
-    radial-gradient(900px 700px at 12% 8%, rgba(167, 139, 250, 0.45), transparent 60%),
-    radial-gradient(900px 700px at 88% 18%, rgba(56, 189, 248, 0.38), transparent 60%),
-    radial-gradient(1100px 900px at 50% 100%, rgba(244, 114, 182, 0.35), transparent 60%);
-  background-attachment: fixed;
-  background-size: cover;
-  position: relative;
   min-height: 100vh;
 }
 
-/* A second, slowly-drifting layer so the canvas never feels static.
- * Position absolute, behind everything, blurred so the motion is felt
- * rather than seen. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(600px 500px at 20% 70%, rgba(124, 58, 237, 0.25), transparent 60%),
-    radial-gradient(700px 600px at 75% 30%, rgba(14, 165, 233, 0.22), transparent 60%);
-  filter: blur(12px);
-  animation: augur-drift 24s ease-in-out infinite alternate;
-}
-
-@keyframes augur-drift {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translate3d(-2%, 1%, 0) scale(1.04);
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(2%, -1%, 0) scale(0.98);
-    opacity: 0.85;
-  }
-}
-
-/* Dark-mode mesh override — same blobs, deeper hues. The CssVarsProvider
- * sets [data-mui-color-scheme="dark"] on <html>. */
-html[data-mui-color-scheme='dark'] body {
-  background-image:
-    radial-gradient(900px 700px at 12% 8%, rgba(124, 58, 237, 0.45), transparent 60%),
-    radial-gradient(900px 700px at 88% 18%, rgba(14, 165, 233, 0.35), transparent 60%),
-    radial-gradient(1100px 900px at 50% 100%, rgba(190, 24, 93, 0.30), transparent 60%);
-}
-
-html[data-mui-color-scheme='dark'] body::before {
-  background-image:
-    radial-gradient(600px 500px at 20% 70%, rgba(167, 139, 250, 0.22), transparent 60%),
-    radial-gradient(700px 600px at 75% 30%, rgba(56, 189, 248, 0.18), transparent 60%);
-}
-
 ::selection {
-  background: var(--mui-palette-primary-main);
-  color: var(--mui-palette-primary-contrastText);
+  background: rgba(194, 65, 12, 0.22);
+  color: inherit;
 }
 
-/* Glass-styled scrollbar. Stays in the light/dark theme. */
+/* Slim, low-contrast scrollbar — book-like, doesn't compete with content. */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(120, 120, 128, 0.32);
+  background: rgba(31, 30, 27, 0.22);
   border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(120, 120, 128, 0.5);
-  background-clip: padding-box;
-  border: 2px solid transparent;
+  background: rgba(31, 30, 27, 0.34);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* A reusable utility for any custom DOM that wants the same glass recipe
- * without going through a MUI component. */
-.augur-glass {
-  background-color: rgba(255, 255, 255, 0.55);
-  backdrop-filter: saturate(180%) blur(28px);
-  -webkit-backdrop-filter: saturate(180%) blur(28px);
-  border: 0.5px solid rgba(255, 255, 255, 0.6);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    0 1px 2px rgba(28, 28, 30, 0.05),
-    0 8px 28px rgba(28, 28, 30, 0.08);
+html[data-mui-color-scheme='dark'] ::-webkit-scrollbar-thumb {
+  background: rgba(241, 236, 226, 0.18);
 }
-html[data-mui-color-scheme='dark'] .augur-glass {
-  background-color: rgba(28, 28, 30, 0.55);
-  border: 0.5px solid rgba(255, 255, 255, 0.10);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 1px 2px rgba(0, 0, 0, 0.5),
-    0 12px 40px rgba(0, 0, 0, 0.45);
-}
-
-/* Disable the animated background for users who request reduced motion. */
-@media (prefers-reduced-motion: reduce) {
-  body::before {
-    animation: none;
-  }
+html[data-mui-color-scheme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(241, 236, 226, 0.28);
 }
