@@ -165,7 +165,7 @@
     "system": "跟随系统"
   },
   "onboarding": {
-    "title": "欢迎使用 myHomepage",
+    "title": "欢迎使用 Augur",
     "subtitle": "一个会从你浏览习惯里学习的新标签页",
     "privacy": {
       "title": "数据全在本地",
@@ -190,7 +190,7 @@
     "cta": "开始使用"
   },
   "homepage": {
-    "title": "把 myHomepage 设为浏览器主页",
+    "title": "把 Augur 设为浏览器主页",
     "copy": "复制链接",
     "copied": "已复制！",
     "copyFailed": "复制失败——可以手动从输入框里选中再复制。",
@@ -201,7 +201,7 @@
     "startupTitle": "启动时自动打开",
     "startupBody": "在 Chrome 启动设置里选「打开特定网页」，把上面的链接粘进去。",
     "openStartupSettings": "打开 chrome://settings/onStartup",
-    "bottomBarTitle": "页面底部的「myHomepage / Customize Chrome」是什么",
+    "bottomBarTitle": "页面底部的「Augur / Customize Chrome」是什么",
     "bottomBarBody": "那是 Chrome 自己加的 UI——任何被扩展覆盖的新标签页底部都会显示这一条，扩展没有任何 API 能隐藏。它不影响数据和隐私。"
   },
   "settings": {

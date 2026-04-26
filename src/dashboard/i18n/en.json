@@ -165,7 +165,7 @@
     "system": "System"
   },
   "onboarding": {
-    "title": "Welcome to myHomepage",
+    "title": "Welcome to Augur",
     "subtitle": "A new tab page that learns from how you actually browse",
     "privacy": {
       "title": "Stays on your device",
@@ -190,7 +190,7 @@
     "cta": "Start using"
   },
   "homepage": {
-    "title": "Make myHomepage your homepage",
+    "title": "Make Augur your homepage",
     "copy": "Copy URL",
     "copied": "Copied!",
     "copyFailed": "Could not copy — paste it manually from the field.",
@@ -201,7 +201,7 @@
     "startupTitle": "Open it on browser startup",
     "startupBody": "In Chrome's startup settings, choose \"Open a specific page\" and paste the URL above.",
     "openStartupSettings": "Open chrome://settings/onStartup",
-    "bottomBarTitle": "About the \"myHomepage / Customize Chrome\" strip at the bottom",
+    "bottomBarTitle": "About the \"Augur / Customize Chrome\" strip at the bottom",
     "bottomBarBody": "That strip is Chrome's own UI — it shows up on every new tab page that's overridden by an extension, and there's no extension API to hide it. It does not affect your data or privacy."
   },
   "settings": {

@@ -76,6 +76,7 @@ public/icons/icon48.png
 public/icons/icon128.png
 
 # Release zips
+augur-*.zip
 chromehomepage-*.zip
 myhomepage-*.zip
 

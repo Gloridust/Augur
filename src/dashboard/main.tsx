@@ -2,7 +2,6 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { CssBaseline } from '@mui/material';
 import { CssVarsProvider, getInitColorSchemeScript } from '@mui/material/styles';
-import '@fontsource/roboto-flex/400.css';
 import App from './App';
 import { theme } from './theme';
 import './i18n';
@@ -18,13 +17,13 @@ createRoot(container).render(
         attribute on <html> before React mounts. */}
     {getInitColorSchemeScript({
       attribute: 'data-mui-color-scheme',
-      modeStorageKey: 'myhomepage:mode',
+      modeStorageKey: 'augur:mode',
       defaultMode: 'system',
     })}
     <CssVarsProvider
       theme={theme}
       defaultMode="system"
-      modeStorageKey="myhomepage:mode"
+      modeStorageKey="augur:mode"
       attribute="data-mui-color-scheme"
     >
       <CssBaseline />

@@ -17,7 +17,7 @@ import HistoryToggleOffIcon from '@mui/icons-material/HistoryToggleOff';
 import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import { useDataSummary } from '../hooks/useDataSummary';
 
-const STORAGE_KEY = 'chromehomepage:onboarded';
+const STORAGE_KEY = 'augur:onboarded';
 
 function PromiseRow({
   icon,

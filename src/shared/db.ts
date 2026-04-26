@@ -24,7 +24,7 @@ export class ChromeHomepageDB extends Dexie {
   kv!: EntityTable<KV, 'key'>;
 
   constructor() {
-    super('chromehomepage');
+    super('augur');
     this.version(1).stores({
       events: '++id, ts, type, tabId, domain, url, [domain+ts], [type+ts]',
       feedback: '++id, ts, surface, domain, action',

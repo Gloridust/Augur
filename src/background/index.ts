@@ -167,8 +167,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 registerMessaging();
 
-// Clicking the toolbar icon should open the dashboard. If it's already open
-// somewhere, focus that tab instead of stacking duplicates.
+// Clicking the toolbar icon opens the dashboard via a normal URL navigation
+// — that's the only way to escape Chrome's "new tab" context (the bottom
+// "myHomepage / Customize Chrome" strip only appears for tabs opened *as*
+// the new tab). If a dashboard tab already exists, focus it; if it was
+// opened via Cmd+T (with the strip), reload it via direct URL to drop the
+// strip.
 chrome.action.onClicked.addListener(async () => {
   const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
   const allTabs = await chrome.tabs.query({});
@@ -179,13 +183,39 @@ chrome.action.onClicked.addListener(async () => {
       t.url === 'chrome://newtab/',
   );
   if (existing?.id !== undefined) {
-    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.tabs.update(existing.id, { active: true, url: dashboardUrl });
     if (existing.windowId !== undefined) {
       await chrome.windows.update(existing.windowId, { focused: true });
     }
     return;
   }
-  await chrome.tabs.create({});
+  await chrome.tabs.create({ url: dashboardUrl });
+});
+
+// Newtab interceptor — see manifest comment. Any time Chrome creates a tab
+// pointing at chrome://newtab/, we immediately rewrite it to the dashboard
+// URL. Because the rewrite happens before NTP UI initializes, the "Customize
+// Chrome / extension name" footer strip never gets attached.
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id === undefined) return;
+  const url = tab.url ?? tab.pendingUrl ?? '';
+  if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') {
+    const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
+    chrome.tabs.update(tab.id, { url: dashboardUrl }).catch(() => {
+      /* tab may already be gone */
+    });
+  }
+});
+
+// As a safety net, also catch tabs that update INTO chrome://newtab/ later
+// (e.g., from an `about:blank` initial state). Same redirect logic.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url === 'chrome://newtab/' || changeInfo.url === 'chrome://new-tab-page/') {
+    const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
+    chrome.tabs.update(tabId, { url: dashboardUrl }).catch(() => {
+      /* tab may already be gone */
+    });
+  }
 });
 
 chrome.tabs.onCreated.addListener(async (tab) => {

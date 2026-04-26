@@ -25,13 +25,12 @@ export default defineManifest({
     'idle',
     'identity.email',
   ],
-  // Tiny stub that redirects to the real dashboard URL. We do this so that
-  // the "Customize Chrome / extension name" strip Chrome attaches to the
-  // newtab override does NOT follow us to the dashboard. The user sees a
-  // sub-100ms loading flash, then lands on a clean extension page.
-  chrome_url_overrides: {
-    newtab: 'newtab.html',
-  },
+  // We intentionally do NOT use chrome_url_overrides.newtab — registering a
+  // newtab override permanently attaches Chrome's "Customize Chrome /
+  // extension name" footer strip to that tab, and it cannot be hidden by
+  // JS, redirect, or CSS. Instead, the service worker intercepts new tabs
+  // opened to chrome://newtab/ and redirects them to the dashboard URL via
+  // chrome.tabs.update, which avoids the NTP context entirely.
   action: {
     default_title: '__MSG_extName__',
     default_icon: {

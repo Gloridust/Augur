@@ -59,8 +59,8 @@ export function StashSection() {
   useEffect(() => {
     void refresh();
     const handler = () => refresh();
-    window.addEventListener('chromehomepage:stash-changed', handler);
-    return () => window.removeEventListener('chromehomepage:stash-changed', handler);
+    window.addEventListener('augur:stash-changed', handler);
+    return () => window.removeEventListener('augur:stash-changed', handler);
   }, [refresh]);
 
   // Hide entirely when stash is empty — keeps the dashboard tidy.
@@ -185,5 +185,5 @@ export function StashSection() {
 
 // Dispatch on stash mutations so the section stays in sync without polling.
 export function notifyStashChanged(): void {
-  window.dispatchEvent(new Event('chromehomepage:stash-changed'));
+  window.dispatchEvent(new Event('augur:stash-changed'));
 }

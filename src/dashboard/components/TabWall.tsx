@@ -70,7 +70,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
   const filter = externalFilter ?? internalFilter;
   const [mode, setMode] = useState<GroupMode>(() => {
     const saved = (typeof localStorage !== 'undefined'
-      ? (localStorage.getItem('chromehomepage:tabWallMode') as GroupMode | null)
+      ? (localStorage.getItem('augur:tabWallMode') as GroupMode | null)
       : null);
     return saved === 'window' ? 'window' : 'domain';
   });
@@ -79,7 +79,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
 
   useEffect(() => {
     try {
-      localStorage.setItem('chromehomepage:tabWallMode', mode);
+      localStorage.setItem('augur:tabWallMode', mode);
     } catch {
       // ignore
     }

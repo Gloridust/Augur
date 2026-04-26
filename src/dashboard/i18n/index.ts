@@ -26,7 +26,7 @@ void i18n
     interpolation: { escapeValue: false },
     detection: {
       order: ['localStorage', 'navigator'],
-      lookupLocalStorage: 'chromehomepage:lang',
+      lookupLocalStorage: 'augur:lang',
       caches: ['localStorage'],
     },
   });

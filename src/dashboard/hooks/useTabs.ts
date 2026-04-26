@@ -19,9 +19,7 @@ export function isDashboardTab(tab: chrome.tabs.Tab): boolean {
   if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') return true;
   if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
     const dashUrl = chrome.runtime.getURL('src/dashboard/index.html');
-    if (url === dashUrl) return true;
-    // The CRX plugin sometimes adds a query string in dev. Match prefix too.
-    if (url.startsWith(dashUrl)) return true;
+    if (url === dashUrl || url.startsWith(dashUrl)) return true;
   }
   return false;
 }

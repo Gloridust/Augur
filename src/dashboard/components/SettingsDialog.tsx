@@ -77,7 +77,7 @@ export function SettingsDialog({ open, onClose }: Props) {
       setConfirmingWipe(false);
       await refresh();
       try {
-        localStorage.removeItem('chromehomepage:onboarded');
+        localStorage.removeItem('augur:onboarded');
       } catch {
         // ignore
       }

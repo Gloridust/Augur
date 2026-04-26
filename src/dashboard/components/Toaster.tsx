@@ -9,7 +9,7 @@ export interface ToastEventDetail {
   durationMs?: number;
 }
 
-const EVT = 'chromehomepage:toast';
+const EVT = 'augur:toast';
 
 export function toast(detail: ToastEventDetail): void {
   if (typeof window === 'undefined') return;

@@ -1,5 +1,5 @@
 {
-  "name": "myhomepage",
+  "name": "augur",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -16,7 +16,6 @@
   "dependencies": {
     "@emotion/react": "^11.13.3",
     "@emotion/styled": "^11.13.0",
-    "@fontsource/roboto-flex": "^5.1.0",
     "@mui/icons-material": "^6.1.6",
     "@mui/material": "^6.1.6",
     "dexie": "^4.0.10",

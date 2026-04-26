@@ -1,10 +1,10 @@
 {
   "extName": {
-    "message": "myHomepage",
+    "message": "Augur",
     "description": "扩展名称（chrome://extensions 与应用商店显示）。"
   },
   "extDescription": {
-    "message": "一个会学习的智能新标签页：推荐你接下来要打开的，以及该清理掉的。",
+    "message": "一个会预测的智能新标签页：知道你接下来要打开什么，提示你该清理什么。",
     "description": "扩展简介。"
   }
 }

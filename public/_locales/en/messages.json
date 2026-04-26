@@ -1,10 +1,10 @@
 {
   "extName": {
-    "message": "myHomepage",
+    "message": "Augur",
     "description": "Extension name shown in chrome://extensions and the Web Store."
   },
   "extDescription": {
-    "message": "A smart, learning new-tab dashboard that recommends what to open and what to close.",
+    "message": "A learning new-tab dashboard that anticipates what you need and clears what you don't.",
     "description": "Extension description."
   }
 }
