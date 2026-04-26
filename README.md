@@ -30,28 +30,11 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 
 ## Demo · 截图
 
-> Drop your own screenshots / GIFs into `docs/` and link them here when you fork. · Fork 后把你的截图或 GIF 放进 `docs/` 再在这里替换链接。
+![homepage](public/demo/Screenshot%202026-04-27%20at%2001.11.18.png)
 
-```
-┌── Nav ─────────────────────────────────────────────────────────────┐
-│ ✱ Augur                                  [G ▾  Search ⌘K]   [⚙]    │
-├──────────────────────────────────────────────────────────────────────┤
-│ 🌀 Good evening, Ethan         [↗ tabs ⏳ minutes 🌐 domains …]      │
-│   Mon, Apr 27                                                        │
-│                                                                      │
-│ ── PINNED ─────────  Smart order                                    │
-│ [📌 GitHub] [📌 Linear] [📌 Notion] [📌 docs.example] …              │
-│                                                                      │
-│ ┌── Smart suggestions ──────┬── Open tabs (with cleanup card) ─────┐ │
-│ │ [📌 next site]             │ ⚠ Cleanup (2)                        │ │
-│ │ [📌 next site]             │ • blog.x — idle 4h  [keep][stash][×] │ │
-│ └────────────────────────────┴─────────────────────────────────────┘ │
-│                                                                      │
-│ Workspaces · Stash · Insights heatmap                                │
-└──────────────────────────────────────────────────────────────────────┘
-```
+![setting1](public/demo/Screenshot%202026-04-27%20at%2001.11.30.png)
 
----
+![setting2](public/demo/Screenshot%202026-04-27%20at%2001.11.38.png)
 
 ## Features · 功能
 
