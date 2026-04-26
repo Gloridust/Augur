@@ -61,11 +61,25 @@ export async function scoreCleanupCandidates(
     if (d && (t.pinned || t.active)) engagedOpenDomains.add(d);
   }
 
+  // Hardcoded dashboard URL pattern — we can compute it via chrome.runtime
+  // here too, but a string check works in the SW context without touching
+  // chrome.runtime.getURL (which can be undefined in some test paths).
+  const dashboardUrlMatch = (url: string | undefined): boolean => {
+    if (!url) return false;
+    if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') return true;
+    if (chrome?.runtime?.getURL) {
+      const dash = chrome.runtime.getURL('src/dashboard/index.html');
+      if (url === dash || url.startsWith(dash)) return true;
+    }
+    return false;
+  };
+
   const candidates: CleanupCandidate[] = [];
   for (const tab of tabs) {
     if (tab.id === undefined) continue;
     if (tab.pinned) continue; // Never suggest closing pinned tabs.
     if (tab.active) continue; // Don't suggest closing the focused tab.
+    if (dashboardUrlMatch(tab.url)) continue; // Never suggest closing the dashboard itself.
     const domain = extractDomain(tab.url);
     if (!domain) continue;
     const state = stateMap[tab.id];

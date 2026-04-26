@@ -25,6 +25,7 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import { exportAllData, wipeAllData } from '../api/recommendations';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { ModelDebugPanel } from './ModelDebugPanel';
+import { SetAsHomepageGuide } from './SetAsHomepageGuide';
 
 interface Props {
   open: boolean;
@@ -130,6 +131,12 @@ export function SettingsDialog({ open, onClose }: Props) {
       <DialogContent>
         {tab === 'general' && (
           <Stack spacing={3} divider={<Divider flexItem />}>
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {t('homepage.title')}
+              </Typography>
+              <SetAsHomepageGuide />
+            </Stack>
             <Stack spacing={2}>
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
                 {t('settings.appearance')}

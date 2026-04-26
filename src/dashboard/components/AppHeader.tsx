@@ -10,7 +10,6 @@ import {
   Stack,
   Toolbar,
   Tooltip,
-  Typography,
 } from '@mui/material';
 import LanguageIcon from '@mui/icons-material/Language';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -36,23 +35,7 @@ export function AppHeader({ onOpenSettings, onOpenPalette }: Props) {
 
   return (
     <AppBar position="sticky">
-      <Toolbar sx={{ gap: 1 }}>
-        <Box
-          aria-hidden
-          sx={{
-            width: 32,
-            height: 32,
-            borderRadius: '50%',
-            background:
-              'conic-gradient(from 200deg, var(--mui-palette-primary-main), var(--mui-palette-secondary-main), var(--mui-palette-primary-main))',
-          }}
-        />
-        <Typography
-          variant="h6"
-          sx={{ ml: 1, color: 'text.primary', fontWeight: 500, letterSpacing: '0.01em' }}
-        >
-          chromehomepage
-        </Typography>
+      <Toolbar sx={{ gap: 1, minHeight: { xs: 48, md: 56 } }}>
         <Box sx={{ flex: 1 }} />
 
         <Tooltip title={t('palette.shortcutHint')}>

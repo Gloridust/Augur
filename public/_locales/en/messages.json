@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "chromehomepage",
+    "message": "myHomepage",
     "description": "Extension name shown in chrome://extensions and the Web Store."
   },
   "extDescription": {

@@ -9,13 +9,42 @@ export interface UseTabsResult {
   refresh: () => void;
 }
 
+// True for any tab that is the dashboard itself (newtab override OR direct
+// chrome-extension URL). These should never appear in the tab wall and must
+// never be returned by close/stash actions — closing the dashboard out from
+// under the user is a hostile UX.
+export function isDashboardTab(tab: chrome.tabs.Tab): boolean {
+  if (!tab.url && !tab.pendingUrl) return false;
+  const url = tab.url ?? tab.pendingUrl ?? '';
+  if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') return true;
+  if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
+    const dashUrl = chrome.runtime.getURL('src/dashboard/index.html');
+    if (url === dashUrl) return true;
+    // The CRX plugin sometimes adds a query string in dev. Match prefix too.
+    if (url.startsWith(dashUrl)) return true;
+  }
+  return false;
+}
+
+export function dashboardUrl(): string {
+  if (typeof chrome !== 'undefined' && chrome?.runtime?.getURL) {
+    return chrome.runtime.getURL('src/dashboard/index.html');
+  }
+  return '';
+}
+
 export function useTabs(): UseTabsResult {
   const [tabs, setTabs] = useState<chrome.tabs.Tab[]>([]);
 
   const refresh = useMemo(
     () => () => {
       if (!chrome?.tabs?.query) return;
-      chrome.tabs.query({}, (result) => setTabs(result));
+      chrome.tabs.query({}, (result) => {
+        // Hide the dashboard itself from the tab wall — it's the surface
+        // the user is currently looking at, listing it just creates a
+        // "wait, why can't I close that?" dead end.
+        setTabs(result.filter((t) => !isDashboardTab(t)));
+      });
     },
     [],
   );
@@ -79,9 +108,18 @@ export function useTabs(): UseTabsResult {
   return { tabs, groups, windowGroups, refresh };
 }
 
+// Defensive close — re-queries all tabs and never includes a dashboard tab,
+// even if the caller somehow handed us its id (e.g., from stale state).
 export async function closeTabs(ids: number[]): Promise<void> {
   if (ids.length === 0) return;
-  await chrome.tabs.remove(ids);
+  let safe = ids;
+  if (typeof chrome !== 'undefined' && chrome?.tabs?.query) {
+    const all = await chrome.tabs.query({});
+    const dashIds = new Set(all.filter(isDashboardTab).map((t) => t.id));
+    safe = ids.filter((id) => !dashIds.has(id));
+  }
+  if (safe.length === 0) return;
+  await chrome.tabs.remove(safe);
 }
 
 export async function activateTab(tab: chrome.tabs.Tab): Promise<void> {

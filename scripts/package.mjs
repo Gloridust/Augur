@@ -18,7 +18,7 @@ async function main() {
     process.exit(1);
   }
   const pkg = JSON.parse(await readFile(resolve(repoRoot, 'package.json'), 'utf8'));
-  const out = resolve(repoRoot, `chromehomepage-${pkg.version}.zip`);
+  const out = resolve(repoRoot, `${pkg.name}-${pkg.version}.zip`);
   if (existsSync(out)) unlinkSync(out);
 
   // -X: don't store extra file attributes; -r: recursive; exclude source maps

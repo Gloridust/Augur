@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { CssBaseline } from '@mui/material';
-import { Experimental_CssVarsProvider as CssVarsProvider } from '@mui/material/styles';
+import { CssVarsProvider, getInitColorSchemeScript } from '@mui/material/styles';
 import '@fontsource/roboto-flex/400.css';
 import App from './App';
 import { theme } from './theme';
@@ -13,7 +13,20 @@ if (!container) throw new Error('root not found');
 
 createRoot(container).render(
   <React.StrictMode>
-    <CssVarsProvider theme={theme} defaultMode="system">
+    {/* getInitColorSchemeScript prevents the brief flash of light theme on
+        first paint when the user prefers dark — it inlines the right
+        attribute on <html> before React mounts. */}
+    {getInitColorSchemeScript({
+      attribute: 'data-mui-color-scheme',
+      modeStorageKey: 'myhomepage:mode',
+      defaultMode: 'system',
+    })}
+    <CssVarsProvider
+      theme={theme}
+      defaultMode="system"
+      modeStorageKey="myhomepage:mode"
+      attribute="data-mui-color-scheme"
+    >
       <CssBaseline />
       <App />
     </CssVarsProvider>

@@ -37,7 +37,11 @@ function confidenceTier(score: number): 'low' | 'medium' | 'high' {
   return 'low';
 }
 
-export function Suggestions() {
+interface Props {
+  dense?: boolean;
+}
+
+export function Suggestions({ dense = false }: Props) {
   const { t } = useTranslation();
   const [items, setItems] = useState<OpenCandidate[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,42 +91,59 @@ export function Suggestions() {
     setItems((prev) => (prev ? prev.filter((p) => p.domain !== c.domain) : prev));
   };
 
+  // Dense mode: 2-col grid since the section sits in a 50% column on lg+.
+  // Roomy mode: full-width row across the dashboard.
+  const gridCols = dense
+    ? { xs: '1fr', sm: 'repeat(2, 1fr)' }
+    : {
+        xs: '1fr',
+        sm: 'repeat(2, 1fr)',
+        md: 'repeat(3, 1fr)',
+        lg: 'repeat(4, 1fr)',
+        xl: 'repeat(5, 1fr)',
+      };
+  const cardPadding = dense ? 1.5 : 2;
+  const cardMinHeight = dense ? 110 : 132;
+
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 1 }}>
-        <Typography variant="h5">{t('sections.suggestions')}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1.5, gap: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 500 }}>
+          {t('sections.suggestions')}
+        </Typography>
         <Box sx={{ flex: 1 }} />
         <Tooltip title={t('actions.refresh')}>
-          <IconButton onClick={refresh} size="small">
-            <RefreshIcon fontSize="small" />
+          <IconButton onClick={refresh} size="small" sx={{ p: 0.5 }}>
+            <RefreshIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
       </Box>
       <Box
         sx={{
           display: 'grid',
-          gap: 2,
-          gridTemplateColumns: {
-            xs: '1fr',
-            sm: 'repeat(2, 1fr)',
-            md: 'repeat(3, 1fr)',
-            lg: 'repeat(5, 1fr)',
-          },
+          gap: dense ? 1.5 : 2,
+          gridTemplateColumns: gridCols,
         }}
       >
         {loading && items === null
-          ? Array.from({ length: 5 }, (_, i) => (
-              <Skeleton key={i} variant="rounded" height={120} sx={{ borderRadius: 4 }} />
+          ? Array.from({ length: dense ? 4 : 5 }, (_, i) => (
+              <Skeleton
+                key={i}
+                variant="rounded"
+                height={cardMinHeight}
+                sx={{ borderRadius: 2 }}
+              />
             ))
           : items && items.length > 0
             ? items.map((c) => (
                 <Card
                   key={c.domain}
                   sx={{
-                    p: 2,
+                    p: cardPadding,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 1.5,
+                    gap: dense ? 0.75 : 1.25,
+                    minHeight: cardMinHeight,
                     cursor: 'pointer',
                     transition:
                       'transform 200ms cubic-bezier(0.2, 0, 0, 1), background-color 200ms cubic-bezier(0.2, 0, 0, 1)',
@@ -137,13 +158,18 @@ export function Suggestions() {
                     <Avatar
                       src={favicon(c.url)}
                       variant="rounded"
-                      sx={{ width: 28, height: 28, bgcolor: 'transparent' }}
+                      sx={{
+                        width: dense ? 22 : 28,
+                        height: dense ? 22 : 28,
+                        bgcolor: 'transparent',
+                      }}
                     />
                     <Typography
-                      variant="subtitle2"
                       sx={{
                         flex: 1,
                         minWidth: 0,
+                        fontSize: dense ? 13 : 14,
+                        fontWeight: 500,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -154,19 +180,20 @@ export function Suggestions() {
                     <Tooltip title={t('actions.dismiss')}>
                       <IconButton
                         size="small"
+                        sx={{ p: 0.25 }}
                         onClick={(e) => {
                           e.stopPropagation();
                           void onDismiss(c);
                         }}
                       >
-                        <CloseIcon fontSize="small" />
+                        <CloseIcon sx={{ fontSize: 16 }} />
                       </IconButton>
                     </Tooltip>
                   </Box>
                   <Typography
-                    variant="caption"
-                    color="text.secondary"
                     sx={{
+                      fontSize: dense ? 11 : 12,
+                      color: 'text.secondary',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
@@ -174,21 +201,17 @@ export function Suggestions() {
                   >
                     {c.domain}
                   </Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 'auto' }}>
                     <Chip
                       size="small"
+                      sx={{ height: dense ? 20 : 24, fontSize: dense ? 10 : 12 }}
                       label={t(`reasons.${c.reason}`, { defaultValue: c.reason })}
                     />
                     <Chip
                       size="small"
+                      sx={{ height: dense ? 20 : 24, fontSize: dense ? 10 : 12 }}
                       label={t(`confidence.${confidenceTier(c.score)}`)}
-                      color={
-                        confidenceTier(c.score) === 'high'
-                          ? 'primary'
-                          : confidenceTier(c.score) === 'medium'
-                            ? 'default'
-                            : 'default'
-                      }
+                      color={confidenceTier(c.score) === 'high' ? 'primary' : 'default'}
                       variant={confidenceTier(c.score) === 'high' ? 'filled' : 'outlined'}
                     />
                   </Box>

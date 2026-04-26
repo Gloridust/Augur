@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "chromehomepage",
+    "message": "myHomepage",
     "description": "扩展名称（chrome://extensions 与应用商店显示）。"
   },
   "extDescription": {

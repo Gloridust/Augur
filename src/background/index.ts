@@ -167,6 +167,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 registerMessaging();
 
+// Clicking the toolbar icon should open the dashboard. If it's already open
+// somewhere, focus that tab instead of stacking duplicates.
+chrome.action.onClicked.addListener(async () => {
+  const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
+  const allTabs = await chrome.tabs.query({});
+  const existing = allTabs.find(
+    (t) =>
+      t.url === dashboardUrl ||
+      t.pendingUrl === dashboardUrl ||
+      t.url === 'chrome://newtab/',
+  );
+  if (existing?.id !== undefined) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId !== undefined) {
+      await chrome.windows.update(existing.windowId, { focused: true });
+    }
+    return;
+  }
+  await chrome.tabs.create({});
+});
+
 chrome.tabs.onCreated.addListener(async (tab) => {
   if (tab.id === undefined || !isTrackable(tab.url)) return;
   const ts = Date.now();

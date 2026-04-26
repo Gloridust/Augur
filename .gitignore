@@ -77,6 +77,7 @@ public/icons/icon128.png
 
 # Release zips
 chromehomepage-*.zip
+myhomepage-*.zip
 
 # Yarn Integrity file
 .yarn-integrity

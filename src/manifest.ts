@@ -23,9 +23,14 @@ export default defineManifest({
     'storage',
     'alarms',
     'idle',
+    'identity.email',
   ],
+  // Tiny stub that redirects to the real dashboard URL. We do this so that
+  // the "Customize Chrome / extension name" strip Chrome attaches to the
+  // newtab override does NOT follow us to the dashboard. The user sees a
+  // sub-100ms loading flash, then lands on a clean extension page.
   chrome_url_overrides: {
-    newtab: 'src/dashboard/index.html',
+    newtab: 'newtab.html',
   },
   action: {
     default_title: '__MSG_extName__',

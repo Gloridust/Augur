@@ -2,10 +2,8 @@ import { useCallback, useState } from 'react';
 import { Box, Container, Stack } from '@mui/material';
 import { AppHeader } from './components/AppHeader';
 import { Greeting } from './components/Greeting';
-import { SearchBar } from './components/SearchBar';
 import { TabWall } from './components/TabWall';
 import { Suggestions } from './components/Suggestions';
-import { CleanupSuggestions } from './components/CleanupSuggestions';
 import { StashSection } from './components/StashSection';
 import { WorkspacesSection } from './components/WorkspacesSection';
 import { TodayRecap } from './components/TodayRecap';
@@ -17,7 +15,6 @@ import { Toaster } from './components/Toaster';
 import { useCommandPaletteShortcut } from './hooks/useGlobalShortcut';
 
 export default function App() {
-  const [query, setQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -30,23 +27,56 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenPalette={openPalette}
       />
-      <Container maxWidth="xl" sx={{ py: { xs: 4, md: 6 } }}>
-        <Stack spacing={{ xs: 4, md: 6 }}>
-          <Stack spacing={3}>
+      {/* maxWidth=false so we can opt into a custom 1800px ceiling — the
+          default `xl` is 1536px which leaves big empty gutters on 2K+ screens. */}
+      <Container
+        maxWidth={false}
+        sx={{
+          py: { xs: 3, md: 4 },
+          px: { xs: 2, sm: 3, md: 4, lg: 5 },
+          mx: 'auto',
+          maxWidth: 1800,
+        }}
+      >
+        <Stack spacing={{ xs: 3, md: 4 }}>
+          {/* Hero: greeting on the left, today's recap on the right (wraps on
+              narrow). Search is in the navbar (⌘K) — no duplicate hero search. */}
+          <Box
+            sx={{
+              display: 'grid',
+              gap: { xs: 2, lg: 3 },
+              gridTemplateColumns: {
+                xs: '1fr',
+                md: 'auto 1fr',
+              },
+              alignItems: 'center',
+            }}
+          >
             <Greeting />
             <TodayRecap />
-            <SearchBar onChange={setQuery} />
-          </Stack>
+          </Box>
 
-          <Suggestions />
-
-          <TabWall filter={query} />
+          {/* Above-the-fold workspace: smart suggestions on the left,
+              currently open tabs on the right. Stack on narrow, side-by-side
+              on lg+. The two columns scroll together. */}
+          <Box
+            sx={{
+              display: 'grid',
+              gap: { xs: 3, lg: 3 },
+              gridTemplateColumns: {
+                xs: '1fr',
+                lg: 'minmax(0, 1fr) minmax(0, 1fr)',
+              },
+              alignItems: 'flex-start',
+            }}
+          >
+            <Suggestions dense />
+            <TabWall dense />
+          </Box>
 
           <WorkspacesSection />
 
           <StashSection />
-
-          <CleanupSuggestions />
 
           <Insights />
         </Stack>

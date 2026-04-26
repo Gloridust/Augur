@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>myHomepage</title>
+    <style>
+      html, body { background: #1d1b20; color: #e6e0e9; margin: 0; height: 100%; }
+      body { display: grid; place-items: center; font-family: system-ui, -apple-system, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <span style="opacity: 0.6">Loading…</span>
+    <script>
+      // Override target — Chrome attaches its "Customize Chrome / extension
+      // name" footer to whichever page is registered as the newtab override.
+      // We register THIS file as the override and immediately bounce to the
+      // real dashboard at a different URL; if the footer is URL-scoped, it
+      // disappears after the redirect. If not, fall back gracefully.
+      (function () {
+        try {
+          const dash = chrome.runtime.getURL('src/dashboard/index.html');
+          // Prefer chrome.tabs.update — it issues a real navigation rather
+          // than a JS replace, which is more likely to escape the NTP shell.
+          if (chrome && chrome.tabs && chrome.tabs.getCurrent) {
+            chrome.tabs.getCurrent(function (tab) {
+              if (tab && typeof tab.id === 'number') {
+                chrome.tabs.update(tab.id, { url: dash });
+              } else {
+                location.replace(dash);
+              }
+            });
+          } else {
+            location.replace(dash);
+          }
+        } catch (e) {
+          location.replace('src/dashboard/index.html');
+        }
+      })();
+    </script>
+  </body>
+</html>

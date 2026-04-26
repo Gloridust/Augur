@@ -3,7 +3,11 @@
     "morning": "Good morning",
     "afternoon": "Good afternoon",
     "evening": "Good evening",
-    "night": "Working late"
+    "night": "Working late",
+    "morningWithName": "Good morning, {{name}}",
+    "afternoonWithName": "Good afternoon, {{name}}",
+    "eveningWithName": "Good evening, {{name}}",
+    "nightWithName": "Working late, {{name}}"
   },
   "search": {
     "placeholder": "Filter open tabs…",
@@ -161,7 +165,7 @@
     "system": "System"
   },
   "onboarding": {
-    "title": "Welcome to chromehomepage",
+    "title": "Welcome to myHomepage",
     "subtitle": "A new tab page that learns from how you actually browse",
     "privacy": {
       "title": "Stays on your device",
@@ -184,6 +188,21 @@
     "progressHint": "Recommendations get sharper after about 50 events.",
     "progressReady": "Enough data — recommendations are live.",
     "cta": "Start using"
+  },
+  "homepage": {
+    "title": "Make myHomepage your homepage",
+    "copy": "Copy URL",
+    "copied": "Copied!",
+    "copyFailed": "Could not copy — paste it manually from the field.",
+    "newTabActive": "New tab page · already active",
+    "homeButtonTitle": "Use it as the home button",
+    "homeButtonBody": "Open Chrome settings, enable the home button, and paste the URL above as a custom address.",
+    "openSettings": "Open chrome://settings",
+    "startupTitle": "Open it on browser startup",
+    "startupBody": "In Chrome's startup settings, choose \"Open a specific page\" and paste the URL above.",
+    "openStartupSettings": "Open chrome://settings/onStartup",
+    "bottomBarTitle": "About the \"myHomepage / Customize Chrome\" strip at the bottom",
+    "bottomBarBody": "That strip is Chrome's own UI — it shows up on every new tab page that's overridden by an extension, and there's no extension API to hide it. It does not affect your data or privacy."
   },
   "settings": {
     "tabGeneral": "General",
