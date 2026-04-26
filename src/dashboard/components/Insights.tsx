@@ -55,7 +55,9 @@ export function Insights() {
   }
 
   const max = Math.max(0, ...data.heatmap.matrix.flat());
-  const baseColor = `rgba(103, 80, 164, ALPHA)`; // primary 6750A4 with variable alpha
+  // Coral with variable alpha — matches the paper-theme primary (#C2410C)
+  // so the heatmap reads as a single design language with the rest of the UI.
+  const baseColor = `rgba(194, 65, 12, ALPHA)`;
 
   return (
     <Box>
@@ -163,7 +165,7 @@ export function Insights() {
                           width: `${widthPct}%`,
                           height: '100%',
                           background:
-                            'linear-gradient(90deg, var(--mui-palette-primary-main), var(--mui-palette-secondary-main))',
+                            'linear-gradient(90deg, var(--mui-palette-primary-dark), var(--mui-palette-primary-main))',
                           transition: 'width 400ms cubic-bezier(0.2, 0, 0, 1)',
                         }}
                       />

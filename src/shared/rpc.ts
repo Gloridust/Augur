@@ -12,6 +12,7 @@ import type {
 import type { InsightsBundle } from '../ml/insights';
 import type { DataDump, ModelInspection } from '../ml/data-ops';
 import type { StashInput } from '../ml/stash';
+import type { PinRerankInput, PinRerankRow } from '../ml/pins';
 
 export type RpcRequest =
   | { kind: 'recommend.open' }
@@ -47,6 +48,7 @@ export type RpcRequest =
   | { kind: 'workspace.delete'; id: number }
   | { kind: 'workspace.restore'; id: number; mode: 'newWindow' | 'currentWindow' }
   | { kind: 'insights.today' }
+  | { kind: 'pins.rerank'; pins: PinRerankInput[] }
   | { kind: 'closeTabs'; tabIds: number[] }
   | { kind: 'openUrl'; url: string };
 
@@ -63,6 +65,7 @@ export type RpcResponse =
   | { ok: true; kind: 'workspace.list'; data: Workspace[] }
   | { ok: true; kind: 'workspace.save'; data: number }
   | { ok: true; kind: 'insights.today'; data: TodayRecap }
+  | { ok: true; kind: 'pins.rerank'; data: PinRerankRow[] }
   | { ok: true; kind: 'ack' }
   | { ok: false; error: string };
 

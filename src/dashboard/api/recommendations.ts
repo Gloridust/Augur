@@ -13,6 +13,7 @@ import { callRpc } from '../../shared/rpc';
 import type { InsightsBundle } from '../../ml/insights';
 import type { DataDump, ModelInspection } from '../../ml/data-ops';
 import type { StashInput } from '../../ml/stash';
+import type { PinRerankInput, PinRerankRow } from '../../ml/pins';
 
 export async function fetchOpenRecommendations(): Promise<OpenCandidate[]> {
   const r = await callRpc({ kind: 'recommend.open' });
@@ -132,4 +133,10 @@ export async function restoreWorkspace(
 export async function fetchTodayRecap(): Promise<TodayRecap | null> {
   const r = await callRpc({ kind: 'insights.today' });
   return r.ok && r.kind === 'insights.today' ? r.data : null;
+}
+
+export async function rerankPinsViaModel(pins: PinRerankInput[]): Promise<PinRerankRow[]> {
+  if (pins.length === 0) return [];
+  const r = await callRpc({ kind: 'pins.rerank', pins });
+  return r.ok && r.kind === 'pins.rerank' ? r.data : [];
 }

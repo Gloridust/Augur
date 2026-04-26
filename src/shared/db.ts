@@ -3,6 +3,7 @@ import type {
   CoOccurrence,
   DomainStats,
   FeedbackEvent,
+  PinnedItem,
   StashedTab,
   TabEvent,
   Workspace,
@@ -21,6 +22,7 @@ export class ChromeHomepageDB extends Dexie {
   cooccurrence!: EntityTable<CoOccurrence, 'pair'>;
   stash!: EntityTable<StashedTab, 'id'>;
   workspaces!: EntityTable<Workspace, 'id'>;
+  pins!: EntityTable<PinnedItem, 'id'>;
   kv!: EntityTable<KV, 'key'>;
 
   constructor() {
@@ -37,6 +39,9 @@ export class ChromeHomepageDB extends Dexie {
     });
     this.version(3).stores({
       workspaces: '++id, name, updatedAt, createdAt',
+    });
+    this.version(4).stores({
+      pins: '++id, &key, pinnedAt, manualOrder',
     });
   }
 }

@@ -123,10 +123,9 @@ export function NavSearchBar() {
     <Box
       ref={containerRef}
       sx={{
-        flex: 1,
-        maxWidth: 640,
+        width: { xs: 240, sm: 320, md: 440, lg: 520 },
+        maxWidth: '100%',
         position: 'relative',
-        mx: { xs: 1, md: 2 },
       }}
     >
       <ClickAwayListener onClickAway={() => setOpen(false)}>

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CssBaseline } from '@mui/material';
 import { CssVarsProvider, useColorScheme } from '@mui/material/styles';
+import '@fontsource/italiana/400.css';
 import App from './App';
 import { theme } from './theme';
 import './i18n';

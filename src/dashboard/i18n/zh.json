@@ -160,6 +160,13 @@
     "refresh": "刷新",
     "dismiss": "忽略"
   },
+  "pins": {
+    "heading": "置顶",
+    "smartSortBadge": "智能排序",
+    "smartSortHint": "按你的时段习惯排列 · 拖动后会暂停几小时",
+    "pin": "置顶",
+    "unpin": "取消置顶"
+  },
   "languages": {
     "en": "English",
     "zh": "中文"
@@ -218,6 +225,9 @@
     "userName": "你的称呼",
     "userNameHint": "出现在顶部问候语里。留空则不显示。",
     "userNamePlaceholder": "比如 Ethan",
+    "pinsTitle": "置顶行",
+    "smartPinSort": "智能重排",
+    "smartPinSortHint": "按你的时段习惯重排置顶项。手动拖动后 6 小时内不会重排，避免刚调好就被打乱。",
     "appearance": "外观",
     "theme": "主题",
     "dataTitle": "你的数据",

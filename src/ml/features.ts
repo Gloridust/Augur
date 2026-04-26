@@ -35,6 +35,8 @@ export const RECOMMEND_FEATURE_NAMES: Array<keyof RecommendFeatures> = [
   'recencyHours',
   'cooccurrenceWithFocused',
   'embedSimToFocused',
+  'visitVelocity',
+  'sessionContext',
   'isCurrentlyOpen',
   'isPinnedSomewhere',
 ];
@@ -96,9 +98,20 @@ export async function buildRecommendFeatures(args: {
   isCurrentlyOpen: boolean;
   isPinnedSomewhere: boolean;
   embedSimToFocused?: number;
+  visitVelocity?: number;
+  sessionContext?: number;
   now: number;
 }): Promise<RecommendFeatures> {
-  const { domain, context, isCurrentlyOpen, isPinnedSomewhere, embedSimToFocused, now } = args;
+  const {
+    domain,
+    context,
+    isCurrentlyOpen,
+    isPinnedSomewhere,
+    embedSimToFocused,
+    visitVelocity,
+    sessionContext,
+    now,
+  } = args;
   const stats = await getDomainStats(domain);
   if (!stats) {
     return {
@@ -109,6 +122,8 @@ export async function buildRecommendFeatures(args: {
       recencyHours: 24 * 30,
       cooccurrenceWithFocused: 0,
       embedSimToFocused: embedSimToFocused ?? 0,
+      visitVelocity: visitVelocity ?? 0,
+      sessionContext: sessionContext ?? 0,
       isCurrentlyOpen: isCurrentlyOpen ? 1 : 0,
       isPinnedSomewhere: isPinnedSomewhere ? 1 : 0,
     };
@@ -127,6 +142,8 @@ export async function buildRecommendFeatures(args: {
     recencyHours,
     cooccurrenceWithFocused: co,
     embedSimToFocused: embedSimToFocused ?? 0,
+    visitVelocity: visitVelocity ?? 0,
+    sessionContext: sessionContext ?? 0,
     isCurrentlyOpen: isCurrentlyOpen ? 1 : 0,
     isPinnedSomewhere: isPinnedSomewhere ? 1 : 0,
   };

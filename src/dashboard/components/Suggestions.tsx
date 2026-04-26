@@ -13,6 +13,8 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import PushPinIcon from '@mui/icons-material/PushPin';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import type { OpenCandidate } from '../../shared/types';
 import {
   fetchOpenRecommendations,
@@ -20,6 +22,7 @@ import {
   reportOpenFeedback,
 } from '../api/recommendations';
 import { useDataSummary } from '../hooks/useDataSummary';
+import { usePins } from '../hooks/usePins';
 import { LearningEmptyState } from './LearningEmptyState';
 
 function favicon(url: string): string {
@@ -46,6 +49,7 @@ export function Suggestions({ dense = false }: Props) {
   const [items, setItems] = useState<OpenCandidate[] | null>(null);
   const [loading, setLoading] = useState(true);
   const { summary } = useDataSummary();
+  const { isPinned, add: pinAdd, remove: pinRemove } = usePins();
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -177,6 +181,29 @@ export function Suggestions({ dense = false }: Props) {
                     >
                       {c.title || c.domain}
                     </Typography>
+                    <Tooltip title={isPinned(c.url) ? t('pins.unpin') : t('pins.pin')}>
+                      <IconButton
+                        size="small"
+                        sx={{
+                          p: 0.25,
+                          color: isPinned(c.url) ? 'primary.main' : 'inherit',
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isPinned(c.url)) {
+                            void pinRemove(c.url);
+                          } else {
+                            void pinAdd({ url: c.url, title: c.title || c.domain });
+                          }
+                        }}
+                      >
+                        {isPinned(c.url) ? (
+                          <PushPinIcon sx={{ fontSize: 16 }} />
+                        ) : (
+                          <PushPinOutlinedIcon sx={{ fontSize: 16 }} />
+                        )}
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title={t('actions.dismiss')}>
                       <IconButton
                         size="small"

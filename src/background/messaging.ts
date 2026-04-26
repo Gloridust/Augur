@@ -18,6 +18,7 @@ import {
   recordRecommendImpressions,
   trainRecommendFeedback,
 } from '../ml/recommend';
+import { rerankPins } from '../ml/pins';
 import {
   deleteStashed,
   listStash,
@@ -159,6 +160,11 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       case 'insights.today': {
         const data = await buildTodayRecap();
         return { ok: true, kind: 'insights.today', data };
+      }
+      case 'pins.rerank': {
+        const ctx = await buildContext();
+        const data = await rerankPins(req.pins, ctx);
+        return { ok: true, kind: 'pins.rerank', data };
       }
       case 'closeTabs': {
         if (req.tabIds.length > 0) await chrome.tabs.remove(req.tabIds);

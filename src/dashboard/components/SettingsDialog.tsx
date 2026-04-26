@@ -11,6 +11,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Switch,
   Tab,
   Tabs,
   TextField,
@@ -25,6 +26,7 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import { exportAllData, wipeAllData } from '../api/recommendations';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
+import { useSmartPinSort } from '../hooks/useSmartPinSort';
 import { ModelDebugPanel } from './ModelDebugPanel';
 import { SetAsHomepageGuide } from './SetAsHomepageGuide';
 
@@ -50,6 +52,7 @@ export function SettingsDialog({ open, onClose }: Props) {
   const { t, i18n } = useTranslation();
   const [userName, setStoredUserName] = useUserNameField();
   const [userNameDraft, setUserNameDraft] = useState(userName);
+  const [smartPinSort, setSmartPinSort] = useSmartPinSort();
 
   // Re-seed the draft when the dialog opens so it stays consistent with the
   // current saved value (e.g. after a wipe-all that resets the name too).
@@ -200,6 +203,32 @@ export function SettingsDialog({ open, onClose }: Props) {
                 ))}
               </Select>
             </Box>
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {t('settings.pinsTitle')}
+              </Typography>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography variant="body2">
+                    {t('settings.smartPinSort')}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {t('settings.smartPinSortHint')}
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={smartPinSort}
+                  onChange={(_, v) => setSmartPinSort(v)}
+                />
+              </Box>
+            </Stack>
           </Stack>
         )}
 

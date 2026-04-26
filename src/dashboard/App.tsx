@@ -7,6 +7,7 @@ import { Suggestions } from './components/Suggestions';
 import { StashSection } from './components/StashSection';
 import { WorkspacesSection } from './components/WorkspacesSection';
 import { TodayRecap } from './components/TodayRecap';
+import { PinsRow } from './components/PinsRow';
 import { Insights } from './components/Insights';
 import { Onboarding } from './components/Onboarding';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -47,6 +48,11 @@ export default function App() {
             <Greeting />
             <TodayRecap />
           </Box>
+
+          {/* Pinned shortcuts — single horizontal row above the hero so
+              fast-access sites are always one click away. Auto-hides when
+              the user has nothing pinned. */}
+          <PinsRow />
 
           {/* Above-the-fold workspace: smart suggestions on the left,
               currently open tabs (with inline cleanup) on the right. */}

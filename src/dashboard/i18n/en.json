@@ -160,6 +160,13 @@
     "refresh": "Refresh",
     "dismiss": "Dismiss"
   },
+  "pins": {
+    "heading": "PINNED",
+    "smartSortBadge": "Smart order",
+    "smartSortHint": "Reordered by time-of-day · paused for a few hours after you drag",
+    "pin": "Pin to top",
+    "unpin": "Remove pin"
+  },
   "languages": {
     "en": "English",
     "zh": "中文"
@@ -218,6 +225,9 @@
     "userName": "Your name",
     "userNameHint": "Shown in the top-of-page greeting. Leave empty to skip.",
     "userNamePlaceholder": "e.g. Ethan",
+    "pinsTitle": "Pinned row",
+    "smartPinSort": "Smart reorder",
+    "smartPinSortHint": "Re-rank pins by your time-of-day pattern. Paused for 6 hours after you drag, so manual arrangements stick.",
     "appearance": "Appearance",
     "theme": "Theme",
     "dataTitle": "Your data",

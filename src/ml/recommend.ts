@@ -8,6 +8,7 @@ import type {
 } from '../shared/types';
 import { getTopDomainsByFrecency } from './aggregate';
 import { getEmbedding } from './embedding-train';
+import { sessionContext as sessionContextFeature, visitVelocity } from './timeseries';
 import {
   RECOMMEND_FEATURE_NAMES,
   buildRecommendFeatures,
@@ -139,19 +140,26 @@ export async function recommendOpen(
   const pinnedSet = new Set(context.pinnedDomains ?? []);
 
   const candidates: OpenCandidate[] = [];
+  const now = Date.now();
   for (let i = 0; i < pool.length; i++) {
     const stat = pool[i];
     if (!stat.domain || stat.domain.startsWith('chrome')) continue;
     const embedSim = context.focusedDomain
       ? embedding.cosine(stat.domain, context.focusedDomain)
       : 0;
+    const [vel, sess] = await Promise.all([
+      visitVelocity(stat.domain, now),
+      sessionContextFeature(stat.domain, now),
+    ]);
     const features = await buildRecommendFeatures({
       domain: stat.domain,
       context,
       isCurrentlyOpen: openSet.has(stat.domain),
       isPinnedSomewhere: pinnedSet.has(stat.domain),
       embedSimToFocused: embedSim,
-      now: Date.now(),
+      visitVelocity: vel,
+      sessionContext: sess,
+      now,
     });
     if (features.isCurrentlyOpen) continue;
     const baseScore = model.predict(vectorFromRecommend(features));

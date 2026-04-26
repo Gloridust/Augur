@@ -15,36 +15,42 @@ export function AppHeader({ onOpenSettings }: Props) {
       <Toolbar
         sx={{
           gap: { xs: 1, md: 2 },
-          minHeight: { xs: 52, md: 60 },
+          minHeight: { xs: 56, md: 64 },
           px: { xs: 1.5, md: 2.5 },
         }}
       >
-        {/* Brand · serif wordmark + coral asterisk so the page has identity
-            without screaming for attention. */}
+        {/* Brand cluster — flower-ball mark + Italiana display wordmark.
+            Italiana is a free, single-stroke artistic Italian serif — gives
+            the name a flowing, designed feel without a custom logotype. */}
         <Box
           sx={{
             display: 'flex',
             alignItems: 'center',
-            gap: 1,
+            gap: 1.25,
             flexShrink: 0,
             color: 'text.primary',
           }}
         >
           <Box sx={{ color: 'var(--mui-palette-primary-main)', display: 'flex' }}>
-            <AugurMark size={20} />
+            <AugurMark size={28} />
           </Box>
           <Typography
-            variant="h5"
             component="span"
             sx={{
-              fontWeight: 500,
-              letterSpacing: '-0.005em',
-              display: { xs: 'none', sm: 'inline' },
+              fontFamily: '"Italiana", "Iowan Old Style", Georgia, serif',
+              fontSize: { xs: 24, md: 28 },
+              lineHeight: 1,
+              letterSpacing: '0.06em',
+              color: 'text.primary',
+              userSelect: 'none',
             }}
           >
             Augur
           </Typography>
         </Box>
+
+        {/* Spacer pushes search + settings to the right. */}
+        <Box sx={{ flex: 1 }} />
 
         <NavSearchBar />
 

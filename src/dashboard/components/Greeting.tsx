@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Box, Typography } from '@mui/material';
-import { AugurMark } from './AugurMark';
+import { MagicBall } from './MagicBall';
 import { useUserName } from '../hooks/useUserName';
 
 function timeBucket(hour: number): 'morning' | 'afternoon' | 'evening' | 'night' {
@@ -27,15 +27,15 @@ export function Greeting() {
       })
     : t(`greeting.${bucket}`);
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1.5, md: 2 } }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 2, md: 2.5 } }}>
       <Box
         sx={{
           color: 'var(--mui-palette-primary-main)',
           flexShrink: 0,
-          mt: { xs: 0.25, md: 0.5 },
+          mt: { xs: 0.5, md: 1 },
         }}
       >
-        <AugurMark size={28} />
+        <MagicBall size={56} />
       </Box>
       <Box sx={{ minWidth: 0 }}>
         <Typography

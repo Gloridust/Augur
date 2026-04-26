@@ -119,6 +119,11 @@ export interface RecommendFeatures {
   recencyHours: number;
   cooccurrenceWithFocused: number;
   embedSimToFocused: number;
+  // Time-series enrichment — visit velocity (last-24h rate vs 14-day baseline)
+  // and session context (visited within the current "session", i.e., last 30
+  // minutes). These let the model spot rising/falling and momentary domains.
+  visitVelocity: number;
+  sessionContext: number;
   isCurrentlyOpen: number;
   isPinnedSomewhere: number;
 }
@@ -195,4 +200,17 @@ export interface WindowGroup {
   windowIndex: number;
   tabs: chrome.tabs.Tab[];
   activeTabTitle?: string;
+}
+
+export interface PinnedItem {
+  id?: number;
+  // Stable key for dedupe; URL is what matters for "is this pinned".
+  key: string;
+  url: string;
+  title: string;
+  domain: string;
+  favIconUrl?: string;
+  pinnedAt: number;
+  // 0..N — smaller is leftmost. Reseeded on every drag-reorder.
+  manualOrder: number;
 }

@@ -18,6 +18,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import PushPinIcon from '@mui/icons-material/PushPin';
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import InventoryIcon from '@mui/icons-material/Inventory2';
 import LayersIcon from '@mui/icons-material/Layers';
 import LanguageIcon from '@mui/icons-material/Language';
@@ -25,6 +26,7 @@ import WindowIcon from '@mui/icons-material/Window';
 import SearchIcon from '@mui/icons-material/Search';
 import { activateTab, closeTabs, useTabs } from '../hooks/useTabs';
 import { stashItems } from '../api/recommendations';
+import { usePins } from '../hooks/usePins';
 import { notifyStashChanged } from './StashSection';
 import { InlineCleanupCard } from './InlineCleanupCard';
 import { toast } from './Toaster';
@@ -65,6 +67,7 @@ interface Props {
 export function TabWall({ filter: externalFilter, dense = false }: Props) {
   const { t } = useTranslation();
   const { groups, windowGroups, tabs } = useTabs();
+  const { isPinned, add: pinAdd, remove: pinRemove } = usePins();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [internalFilter, setInternalFilter] = useState('');
   const filter = externalFilter ?? internalFilter;
@@ -627,6 +630,41 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
                         >
                           {tab.title || tab.url}
                         </Typography>
+                        <Tooltip
+                          title={
+                            tab.url && isPinned(tab.url)
+                              ? t('pins.unpin')
+                              : t('pins.pin')
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!tab.url) return;
+                              if (isPinned(tab.url)) {
+                                void pinRemove(tab.url);
+                              } else {
+                                void pinAdd({
+                                  url: tab.url,
+                                  title: tab.title ?? tab.url,
+                                  favIconUrl: tab.favIconUrl,
+                                });
+                              }
+                            }}
+                            sx={{
+                              p: 0.25,
+                              color:
+                                tab.url && isPinned(tab.url) ? 'primary.main' : 'inherit',
+                            }}
+                          >
+                            {tab.url && isPinned(tab.url) ? (
+                              <PushPinIcon sx={{ fontSize: 14 }} />
+                            ) : (
+                              <PushPinOutlinedIcon sx={{ fontSize: 14 }} />
+                            )}
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title={tab.url ?? ''}>
                           <IconButton
                             size="small"
