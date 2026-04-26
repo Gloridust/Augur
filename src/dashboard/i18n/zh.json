@@ -1,0 +1,249 @@
+{
+  "greeting": {
+    "morning": "早上好",
+    "afternoon": "下午好",
+    "evening": "晚上好",
+    "night": "夜深了"
+  },
+  "search": {
+    "placeholder": "在打开的标签里搜索…",
+    "noResults": "没有匹配"
+  },
+  "sections": {
+    "suggestions": "智能推荐",
+    "openTabs": "打开的标签",
+    "cleanup": "清理建议",
+    "stash": "暂存",
+    "workspaces": "工作区",
+    "insights": "洞察"
+  },
+  "tabs": {
+    "count_one": "{{count}} 个标签",
+    "count_other": "{{count}} 个标签",
+    "domainCount_one": "{{count}} 个域名",
+    "domainCount_other": "{{count}} 个域名",
+    "windowCount_one": "{{count}} 个窗口",
+    "windowCount_other": "{{count}} 个窗口",
+    "windowLabel": "窗口 {{index}}",
+    "byDomain": "按域名",
+    "byWindow": "按窗口",
+    "selected_one": "已选 {{count}} 个",
+    "selected_other": "已选 {{count}} 个",
+    "closeSelected": "关闭所选",
+    "stashSelected": "暂存所选",
+    "selectAll": "全选",
+    "clearSelection": "取消",
+    "closeAllInDomain": "全部关闭",
+    "stashAllInDomain": "全部暂存",
+    "closeOne": "关闭该标签",
+    "empty": "没有打开的标签",
+    "keyboardHint": "提示：聚焦到网格后，↑↓ 移动 · Space 选中 · Enter 切换 · Delete 关闭 · ⌘A 全选"
+  },
+  "suggestions": {
+    "readyEmpty": "暂时没什么够格的推荐，继续用一会儿就会再冒出来。",
+    "warmup": "模型还在学习你的浏览习惯。等观察到足够数据后会开始推荐。"
+  },
+  "cleanup": {
+    "empty": "没什么要清理的，标签收件箱清空了。",
+    "warmup": "模型还在学你什么时候放弃一个标签。看到足够多关闭事件后就会开始标记冷门标签。",
+    "close": "关闭",
+    "dismiss": "保留",
+    "snooze": "稍后再提醒",
+    "stash": "暂存稍后再看",
+    "acceptAll": "全部关闭",
+    "idleFor": "已闲置 {{duration}}"
+  },
+  "stash": {
+    "open": "打开并从暂存移除",
+    "delete": "丢弃",
+    "openAll": "全部打开",
+    "fromCleanup": "来自清理"
+  },
+  "workspaces": {
+    "saveCurrent": "把当前会话另存为工作区",
+    "saveTitle": "保存工作区",
+    "save": "保存",
+    "nameLabel": "工作区名称",
+    "captureCount_one": "将捕获仪表板中的 {{count}} 个标签",
+    "captureCount_other": "将捕获仪表板中的 {{count}} 个标签",
+    "tabCount_one": "{{count}} 个标签",
+    "tabCount_other": "{{count}} 个标签",
+    "defaultName": "工作区 · {{date}}",
+    "empty": "还没有工作区。把当前的标签集保存下来，以后一键回到这里。",
+    "openHere": "在当前窗口全部打开",
+    "openInNewWindow": "在新窗口打开",
+    "here": "当前",
+    "newWindow": "新窗口",
+    "rename": "重命名",
+    "renameTitle": "重命名工作区",
+    "updateFromCurrent": "用当前标签覆盖更新",
+    "delete": "删除",
+    "menu": "工作区操作"
+  },
+  "today": {
+    "tabsOpened": "今日打开标签",
+    "domainsVisited": "今日访问域名",
+    "focusMinutes": "今日专注",
+    "topDomain": "今日 Top 域名",
+    "topDomainHint": "专注 {{minutes}} 分钟",
+    "busiestHour": "最忙时段"
+  },
+  "learning": {
+    "progress": "学习进度",
+    "count": "{{current}} / {{target}} 个事件"
+  },
+  "insights": {
+    "heatmapTitle": "你的专注时段",
+    "topDomainsTitle": "按专注时长排名的域名",
+    "totalFocus": "近 30 天专注 {{hours}} 小时",
+    "distinctDomains_one": "{{count}} 个域名",
+    "distinctDomains_other": "{{count}} 个域名",
+    "empty": "暂时还没有数据。"
+  },
+  "reasons": {
+    "never-focused": "从未聚焦",
+    "low-engagement": "停留极少",
+    "idle-day-plus": "闲置一天以上",
+    "idle-hours": "闲置数小时",
+    "duplicate-domain": "同域名重复",
+    "stale": "已过时",
+    "co-opens-with-current": "常和当前页同时打开",
+    "semantically-related": "和你正在做的相关",
+    "matches-time-of-day": "符合你的时段习惯",
+    "recent": "最近访问过",
+    "frequent": "高频访问",
+    "historical": "来自历史",
+    "popular": "热门站点"
+  },
+  "confidence": {
+    "low": "可以瞄一眼",
+    "medium": "比较匹配",
+    "high": "强匹配"
+  },
+  "toasts": {
+    "tabsClosed_one": "已关闭 {{count}} 个标签",
+    "tabsClosed_other": "已关闭 {{count}} 个标签",
+    "tabsStashed_one": "已暂存 {{count}} 个标签",
+    "tabsStashed_other": "已暂存 {{count}} 个标签",
+    "workspaceSaved_one": "已保存 \"{{name}}\"，共 {{count}} 个标签",
+    "workspaceSaved_other": "已保存 \"{{name}}\"，共 {{count}} 个标签",
+    "workspaceRestored_one": "已恢复 \"{{name}}\" — 正在打开 {{count}} 个标签",
+    "workspaceRestored_other": "已恢复 \"{{name}}\" — 正在打开 {{count}} 个标签",
+    "workspaceUpdated": "工作区已用当前标签更新",
+    "workspaceDeleted": "已删除工作区 \"{{name}}\"",
+    "embedRetrained": "嵌入已重训：{{steps}} 步，{{vocab}} 个域名",
+    "modelsReset": "模型已重置，将基于现有事件流重新学习。"
+  },
+  "duration": {
+    "seconds_one": "{{count}} 秒",
+    "seconds_other": "{{count}} 秒",
+    "minutes_one": "{{count}} 分钟",
+    "minutes_other": "{{count}} 分钟",
+    "hours_one": "{{count}} 小时",
+    "hours_other": "{{count}} 小时",
+    "days_one": "{{count}} 天",
+    "days_other": "{{count}} 天"
+  },
+  "actions": {
+    "settings": "设置",
+    "language": "语言",
+    "refresh": "刷新",
+    "dismiss": "忽略"
+  },
+  "languages": {
+    "en": "English",
+    "zh": "中文"
+  },
+  "theme": {
+    "toggle": "主题",
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
+  "onboarding": {
+    "title": "欢迎使用 chromehomepage",
+    "subtitle": "一个会从你浏览习惯里学习的新标签页",
+    "privacy": {
+      "title": "数据全在本地",
+      "body": "所有事件、模型权重、聚合都在浏览器的 IndexedDB 里。无遥测、无云同步、无远端调用。"
+    },
+    "collect": {
+      "title": "观察哪些信号",
+      "body": "标签的打开、聚焦、失焦、关闭、跳转、idle 状态——只用于打分推荐和清理。"
+    },
+    "suggestRow": {
+      "title": "智能推荐",
+      "body": "在线模型会基于时段、星期、最近访问和当前在看的页面，推断你接下来想去的地方。"
+    },
+    "cleanupRow": {
+      "title": "会学的清理",
+      "body": "对每条建议点保留 / 关闭 / 稍后即可训练模型，它会停止打扰你总是保留的页面。"
+    },
+    "progressTitle": "学习进度",
+    "progressCount": "{{events}} / {{target}} 个事件",
+    "progressHint": "约 50 个事件后推荐会变得明显更准。",
+    "progressReady": "数据已足够，推荐已上线。",
+    "cta": "开始使用"
+  },
+  "settings": {
+    "tabGeneral": "通用",
+    "tabData": "数据",
+    "tabAdvanced": "高级",
+    "appearance": "外观",
+    "theme": "主题",
+    "dataTitle": "你的数据",
+    "events": "事件数",
+    "domains": "域名数",
+    "feedback": "反馈次数",
+    "firstEvent": "首次事件",
+    "never": "暂无",
+    "cleanupTraining": "清理样本（总 / 正）",
+    "recommendTraining": "推荐样本（总 / 正）",
+    "export": "导出 JSON",
+    "exportTooltip": "把所有数据下载为 JSON 文件",
+    "wipe": "清除全部数据",
+    "wipeConfirm": "确认清除",
+    "cancel": "取消",
+    "privacyHint": "清除会删掉所有事件、模型权重、bandit 后验、暂存内容，并重置首次引导。"
+  },
+  "debug": {
+    "heads": "逻辑回归两个头",
+    "cleanupHead": "清理头 — 特征权重",
+    "recommendHead": "打开推荐头 — 特征权重",
+    "embedding": "域名嵌入",
+    "embeddingEmpty": "还没有学到嵌入。等浏览久一点或手动训练。",
+    "retrainEmbedding": "立即训练",
+    "resetModels": "重置模型",
+    "resetConfirm": "确认重置",
+    "calibration": "Platt 校准",
+    "dim": "维度",
+    "vocab": "词表",
+    "steps": "步数",
+    "updated": "更新于",
+    "bandits": "Bandit 后验（按曝光排序）",
+    "cleanupBandit": "清理 bandit",
+    "recommendBandit": "推荐 bandit"
+  },
+  "palette": {
+    "placeholder": "搜索标签、历史、书签、命令…",
+    "empty": "没有匹配。",
+    "openTab": "打开的标签",
+    "command": "命令",
+    "history": "历史",
+    "bookmark": "书签",
+    "tabsGroup": "打开的标签",
+    "commandsGroup": "命令",
+    "historyGroup": "历史",
+    "bookmarksGroup": "书签",
+    "shortcutHint": "搜索标签、历史、书签（⌘K）",
+    "openCta": "搜索"
+  },
+  "commands": {
+    "openSettings": "打开设置",
+    "openSettingsHint": "主题、语言、数据控制",
+    "rebuildAggregates": "从事件流重建聚合",
+    "rebuildAggregatesHint": "重新算一次域名统计和共现",
+    "toggleLanguage": "切换语言",
+    "toggleLanguageHint": "在英文和中文之间切换"
+  }
+}

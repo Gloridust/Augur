@@ -1,0 +1,249 @@
+{
+  "greeting": {
+    "morning": "Good morning",
+    "afternoon": "Good afternoon",
+    "evening": "Good evening",
+    "night": "Working late"
+  },
+  "search": {
+    "placeholder": "Filter open tabs…",
+    "noResults": "No matches"
+  },
+  "sections": {
+    "suggestions": "Smart suggestions",
+    "openTabs": "Open tabs",
+    "cleanup": "Cleanup suggestions",
+    "stash": "Stashed",
+    "workspaces": "Workspaces",
+    "insights": "Insights"
+  },
+  "tabs": {
+    "count_one": "{{count}} tab",
+    "count_other": "{{count}} tabs",
+    "domainCount_one": "{{count}} domain",
+    "domainCount_other": "{{count}} domains",
+    "windowCount_one": "{{count}} window",
+    "windowCount_other": "{{count}} windows",
+    "windowLabel": "Window {{index}}",
+    "byDomain": "By domain",
+    "byWindow": "By window",
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "closeSelected": "Close selected",
+    "stashSelected": "Stash selected",
+    "selectAll": "Select all",
+    "clearSelection": "Clear",
+    "closeAllInDomain": "Close all",
+    "stashAllInDomain": "Stash all",
+    "closeOne": "Close tab",
+    "empty": "No open tabs",
+    "keyboardHint": "Tip: focus the grid, then ↑↓ to move · Space to select · Enter to switch · Delete to close · ⌘A to select all"
+  },
+  "suggestions": {
+    "readyEmpty": "Nothing meets the bar right now — keep browsing and the model will surface things again.",
+    "warmup": "Still learning your patterns. Suggestions show up after the model has seen enough of your activity."
+  },
+  "cleanup": {
+    "empty": "Nothing to clean up. Inbox-zero for tabs.",
+    "warmup": "Still learning when you abandon tabs. Once the model has seen enough closes, it will start flagging stale ones.",
+    "close": "Close",
+    "dismiss": "Keep",
+    "snooze": "Ask later",
+    "stash": "Stash for later",
+    "acceptAll": "Close all suggested",
+    "idleFor": "idle {{duration}}"
+  },
+  "stash": {
+    "open": "Open and remove from stash",
+    "delete": "Forget",
+    "openAll": "Open all",
+    "fromCleanup": "from cleanup"
+  },
+  "workspaces": {
+    "saveCurrent": "Save current as workspace",
+    "saveTitle": "Save workspace",
+    "save": "Save",
+    "nameLabel": "Workspace name",
+    "captureCount_one": "Capturing {{count}} tab from this dashboard",
+    "captureCount_other": "Capturing {{count}} tabs from this dashboard",
+    "tabCount_one": "{{count}} tab",
+    "tabCount_other": "{{count}} tabs",
+    "defaultName": "Workspace · {{date}}",
+    "empty": "No workspaces yet. Save the current set of tabs to come back to them later.",
+    "openHere": "Open all in current window",
+    "openInNewWindow": "Open in a new window",
+    "here": "Here",
+    "newWindow": "New window",
+    "rename": "Rename",
+    "renameTitle": "Rename workspace",
+    "updateFromCurrent": "Update from current tabs",
+    "delete": "Delete",
+    "menu": "Workspace actions"
+  },
+  "today": {
+    "tabsOpened": "Tabs opened today",
+    "domainsVisited": "Domains today",
+    "focusMinutes": "Focus today",
+    "topDomain": "Top domain today",
+    "topDomainHint": "{{minutes}} min of focus",
+    "busiestHour": "Busiest hour"
+  },
+  "learning": {
+    "progress": "Learning progress",
+    "count": "{{current}} / {{target}} events"
+  },
+  "insights": {
+    "heatmapTitle": "When you're focused",
+    "topDomainsTitle": "Top domains by focus time",
+    "totalFocus": "{{hours}} h of focus in the last 30 days",
+    "distinctDomains_one": "{{count}} domain",
+    "distinctDomains_other": "{{count}} domains",
+    "empty": "No data yet."
+  },
+  "reasons": {
+    "never-focused": "Never focused",
+    "low-engagement": "Low engagement",
+    "idle-day-plus": "Idle 1 day+",
+    "idle-hours": "Idle for hours",
+    "duplicate-domain": "Duplicate of this domain",
+    "stale": "Stale",
+    "co-opens-with-current": "Often opened with this",
+    "semantically-related": "Related to what you're doing",
+    "matches-time-of-day": "Matches your time of day",
+    "recent": "Recent",
+    "frequent": "Frequently visited",
+    "historical": "From your history",
+    "popular": "Popular site"
+  },
+  "confidence": {
+    "low": "Worth a glance",
+    "medium": "Decent match",
+    "high": "Strong match"
+  },
+  "toasts": {
+    "tabsClosed_one": "Closed {{count}} tab",
+    "tabsClosed_other": "Closed {{count}} tabs",
+    "tabsStashed_one": "Stashed {{count}} tab",
+    "tabsStashed_other": "Stashed {{count}} tabs",
+    "workspaceSaved_one": "Saved \"{{name}}\" with {{count}} tab",
+    "workspaceSaved_other": "Saved \"{{name}}\" with {{count}} tabs",
+    "workspaceRestored_one": "Restored \"{{name}}\" — {{count}} tab opening",
+    "workspaceRestored_other": "Restored \"{{name}}\" — {{count}} tabs opening",
+    "workspaceUpdated": "Workspace updated from current tabs",
+    "workspaceDeleted": "Deleted workspace \"{{name}}\"",
+    "embedRetrained": "Retrained embeddings: {{steps}} steps, {{vocab}} domains",
+    "modelsReset": "Models reset. They will retrain from your existing event log."
+  },
+  "duration": {
+    "seconds_one": "{{count}} second",
+    "seconds_other": "{{count}} seconds",
+    "minutes_one": "{{count}} minute",
+    "minutes_other": "{{count}} minutes",
+    "hours_one": "{{count}} hour",
+    "hours_other": "{{count}} hours",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days"
+  },
+  "actions": {
+    "settings": "Settings",
+    "language": "Language",
+    "refresh": "Refresh",
+    "dismiss": "Dismiss"
+  },
+  "languages": {
+    "en": "English",
+    "zh": "中文"
+  },
+  "theme": {
+    "toggle": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "onboarding": {
+    "title": "Welcome to chromehomepage",
+    "subtitle": "A new tab page that learns from how you actually browse",
+    "privacy": {
+      "title": "Stays on your device",
+      "body": "All events, model weights, and aggregates live in your browser's IndexedDB. No telemetry, no cloud sync, no remote calls."
+    },
+    "collect": {
+      "title": "What gets observed",
+      "body": "Tab opens, focuses, blurs, closes, navigations, and idle transitions — used only to score what to recommend and what to clean up."
+    },
+    "suggestRow": {
+      "title": "Smart suggestions",
+      "body": "An online model ranks sites you're likely to want next, based on time, day, recency, and what's on screen."
+    },
+    "cleanupRow": {
+      "title": "Cleanup that adapts",
+      "body": "Keep / close / snooze each suggestion to teach the model. It stops nagging about pages you always keep."
+    },
+    "progressTitle": "Learning progress",
+    "progressCount": "{{events}} / {{target}} events",
+    "progressHint": "Recommendations get sharper after about 50 events.",
+    "progressReady": "Enough data — recommendations are live.",
+    "cta": "Start using"
+  },
+  "settings": {
+    "tabGeneral": "General",
+    "tabData": "Data",
+    "tabAdvanced": "Advanced",
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "dataTitle": "Your data",
+    "events": "Events",
+    "domains": "Domains",
+    "feedback": "Feedback given",
+    "firstEvent": "First event",
+    "never": "Never",
+    "cleanupTraining": "Cleanup samples (total / pos)",
+    "recommendTraining": "Recommend samples (total / pos)",
+    "export": "Export JSON",
+    "exportTooltip": "Download all data as a JSON file",
+    "wipe": "Wipe all data",
+    "wipeConfirm": "Confirm wipe",
+    "cancel": "Cancel",
+    "privacyHint": "Wiping clears every event, model weight, bandit posterior, and stash, and resets onboarding."
+  },
+  "debug": {
+    "heads": "Logistic-regression heads",
+    "cleanupHead": "Cleanup head — feature weights",
+    "recommendHead": "Open-recommendation head — feature weights",
+    "embedding": "Domain embeddings",
+    "embeddingEmpty": "No embeddings learned yet. Run training or browse for a while.",
+    "retrainEmbedding": "Retrain now",
+    "resetModels": "Reset models",
+    "resetConfirm": "Confirm reset",
+    "calibration": "Platt",
+    "dim": "dim",
+    "vocab": "vocab",
+    "steps": "steps",
+    "updated": "updated",
+    "bandits": "Bandit posteriors (top arms by impressions)",
+    "cleanupBandit": "Cleanup bandit",
+    "recommendBandit": "Recommend bandit"
+  },
+  "palette": {
+    "placeholder": "Search tabs, history, bookmarks, commands…",
+    "empty": "No matches.",
+    "openTab": "Open tab",
+    "command": "Command",
+    "history": "History",
+    "bookmark": "Bookmark",
+    "tabsGroup": "Open tabs",
+    "commandsGroup": "Commands",
+    "historyGroup": "History",
+    "bookmarksGroup": "Bookmarks",
+    "shortcutHint": "Search tabs, history, bookmarks (⌘K)",
+    "openCta": "Search"
+  },
+  "commands": {
+    "openSettings": "Open settings",
+    "openSettingsHint": "Theme, language, and data controls",
+    "rebuildAggregates": "Rebuild aggregates from events",
+    "rebuildAggregatesHint": "Recompute domain stats and co-occurrence from the raw event log",
+    "toggleLanguage": "Toggle language",
+    "toggleLanguageHint": "Switch between English and 中文"
+  }
+}

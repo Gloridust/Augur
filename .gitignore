@@ -69,6 +69,15 @@ web_modules/
 # Output of 'npm pack'
 *.tgz
 
+# Generated PNG icons (regenerated from icons/icon.svg at build time)
+public/icons/icon16.png
+public/icons/icon32.png
+public/icons/icon48.png
+public/icons/icon128.png
+
+# Release zips
+chromehomepage-*.zip
+
 # Yarn Integrity file
 .yarn-integrity
 
