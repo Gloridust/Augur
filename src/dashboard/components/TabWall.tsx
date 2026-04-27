@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Avatar,
@@ -82,6 +82,13 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
   // exactly the signal we need to harvest as a correction.
   const [aiSelected, setAiSelected] = useState<Map<number, CleanupCandidate>>(new Map());
   const [smartLoading, setSmartLoading] = useState(false);
+  // Cooldown after the user explicitly clears the AI batch — prevents the
+  // visibility-change auto-rerun from immediately re-selecting the tabs
+  // they just rejected.
+  const lastDismissTsRef = useRef<number>(0);
+  // Track whether we've done the on-mount auto-run yet so it fires exactly
+  // once after `tabs` first populates (not on every re-render).
+  const hasAutoRunRef = useRef(false);
   const [internalFilter, setInternalFilter] = useState('');
   const filter = externalFilter ?? internalFilter;
   const [mode, setMode] = useState<GroupMode>(() => {
@@ -206,47 +213,88 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
 
   // Manual "Clear" button: if the user dismisses an AI batch entirely
   // without closing anything, treat every AI-selected tab as 'dismissed' —
-  // they explicitly walked away from the model's suggestion.
+  // they explicitly walked away from the model's suggestion. Also stamps a
+  // cooldown so the next visibility-change tick doesn't immediately
+  // re-select the same tabs.
   const clearSelection = () => {
     void flushSmartCleanupFeedback(new Set());
     setSelected(new Set());
     setAiSelected(new Map());
+    lastDismissTsRef.current = Date.now();
   };
 
-  const runSmartCleanup = async () => {
-    if (smartLoading) return;
-    setSmartLoading(true);
-    try {
-      const candidates = await fetchAllCleanupCandidates();
-      if (candidates.length === 0) {
-        toast({ message: t('cleanup.smartNoMatches'), severity: 'info' });
-        return;
-      }
-      // Restrict to candidates that actually exist as open tabs right now
-      // (the model query is async; tabs can close in between).
-      const openIds = new Set(tabs.map((tb) => tb.id).filter((x): x is number => x !== undefined));
-      const map = new Map<number, CleanupCandidate>();
-      const nextSelected = new Set(selected);
-      for (const c of candidates) {
-        if (c.tab.id !== undefined && openIds.has(c.tab.id)) {
-          map.set(c.tab.id, c);
-          nextSelected.add(c.tab.id);
+  // `announce` controls whether we surface toasts. The button click sets it
+  // true (user expects feedback); on-mount + visibility-change auto-runs
+  // pass false so we don't spam notifications every time the dashboard
+  // becomes visible.
+  const runSmartCleanup = useCallback(
+    async (announce: boolean = true) => {
+      if (smartLoading) return;
+      setSmartLoading(true);
+      try {
+        const candidates = await fetchAllCleanupCandidates();
+        const openIds = new Set(
+          tabs.map((tb) => tb.id).filter((x): x is number => x !== undefined),
+        );
+        const map = new Map<number, CleanupCandidate>();
+        const candidateIds = new Set<number>();
+        for (const c of candidates) {
+          if (c.tab.id !== undefined && openIds.has(c.tab.id)) {
+            map.set(c.tab.id, c);
+            candidateIds.add(c.tab.id);
+          }
         }
+        if (map.size === 0) {
+          if (announce) {
+            toast({ message: t('cleanup.smartNoMatches'), severity: 'info' });
+          }
+          return;
+        }
+        setAiSelected(map);
+        // Functional update so this works regardless of stale `selected`
+        // captures (important for the auto-run path).
+        setSelected((prev) => {
+          const next = new Set(prev);
+          for (const id of candidateIds) next.add(id);
+          return next;
+        });
+        if (announce) {
+          toast({
+            message: t('cleanup.smartFound', { count: map.size }),
+            severity: 'success',
+          });
+        }
+      } finally {
+        setSmartLoading(false);
       }
-      if (map.size === 0) {
-        toast({ message: t('cleanup.smartNoMatches'), severity: 'info' });
-        return;
-      }
-      setAiSelected(map);
-      setSelected(nextSelected);
-      toast({
-        message: t('cleanup.smartFound', { count: map.size }),
-        severity: 'success',
-      });
-    } finally {
-      setSmartLoading(false);
-    }
-  };
+    },
+    [smartLoading, tabs, t],
+  );
+
+  // Auto-run #1: on mount, once `tabs` has populated. Each new dashboard
+  // tab gets a fresh model evaluation without the user pressing anything.
+  useEffect(() => {
+    if (hasAutoRunRef.current) return;
+    if (tabs.length === 0) return;
+    hasAutoRunRef.current = true;
+    void runSmartCleanup(false);
+  }, [tabs.length, runSmartCleanup]);
+
+  // Auto-run #2: every time the dashboard becomes visible (user switches
+  // back to this tab). Skipped when:
+  //   - the user is mid-batch (selected or AI batch still active), or
+  //   - the user dismissed a batch in the last 30s (cooldown).
+  useEffect(() => {
+    const COOLDOWN_MS = 30_000;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (selected.size > 0 || aiSelected.size > 0) return;
+      if (Date.now() - lastDismissTsRef.current < COOLDOWN_MS) return;
+      void runSmartCleanup(false);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [selected.size, aiSelected.size, runSmartCleanup]);
 
   const closeGroup = async (groupTabs: chrome.tabs.Tab[]) => {
     const ids = groupTabs.map((t) => t.id).filter((x): x is number => x !== undefined);
@@ -388,7 +436,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
               size="small"
               variant="outlined"
               color="primary"
-              onClick={runSmartCleanup}
+              onClick={() => void runSmartCleanup(true)}
               disabled={smartLoading || tabs.length === 0}
               startIcon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />}
               sx={{
