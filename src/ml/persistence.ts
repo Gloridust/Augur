@@ -3,8 +3,13 @@ import { BetaBandit, type BanditState } from './models/bandit';
 import { SkipGramEmbedding, type EmbeddingState } from './models/embedding';
 import { OnlineLogReg, type LogRegState } from './models/logreg';
 
-const KV_CLEANUP_MODEL = 'model:cleanup:v2';
-const KV_RECOMMEND_MODEL = 'model:recommend:v2';
+// v3 = expanded feature set (cyclic time, audible/discarded, tab position,
+// window homogeneity, named groups, navCount, idle) + Adam optimizer
+// state + L1. Bumping the key resets old saved weights so we don't
+// silently mis-map indices; events stay intact and the model warms back
+// up via incremental updates.
+const KV_CLEANUP_MODEL = 'model:cleanup:v3';
+const KV_RECOMMEND_MODEL = 'model:recommend:v3';
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';
 const KV_RECOMMEND_BANDIT = 'bandit:recommend:v1';
 const KV_EMBEDDING = 'embedding:v1';
@@ -23,7 +28,9 @@ async function saveKV(key: string, value: unknown): Promise<void> {
 export async function loadCleanupModel(featureCount: number): Promise<OnlineLogReg> {
   const raw = await loadKV<LogRegState>(KV_CLEANUP_MODEL);
   if (raw && raw.weights.length === featureCount) return OnlineLogReg.load(raw);
-  const m = new OnlineLogReg(featureCount, { lr: 0.05, l2: 1e-4 });
+  // Adam-friendly defaults: smaller base lr (Adam's effective step is larger
+  // than vanilla SGD), small L2 for shrinkage, small L1 for sparsity.
+  const m = new OnlineLogReg(featureCount, { lr: 0.01, l2: 1e-4, l1: 1e-5 });
   m.setPriorRate(0.15);
   return m;
 }
@@ -35,7 +42,7 @@ export async function saveCleanupModel(model: OnlineLogReg): Promise<void> {
 export async function loadRecommendModel(featureCount: number): Promise<OnlineLogReg> {
   const raw = await loadKV<LogRegState>(KV_RECOMMEND_MODEL);
   if (raw && raw.weights.length === featureCount) return OnlineLogReg.load(raw);
-  const m = new OnlineLogReg(featureCount, { lr: 0.05, l2: 1e-4 });
+  const m = new OnlineLogReg(featureCount, { lr: 0.01, l2: 1e-4, l1: 1e-5 });
   m.setPriorRate(0.25);
   return m;
 }

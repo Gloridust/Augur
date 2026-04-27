@@ -1,6 +1,6 @@
 import { db, extractDomain } from '../shared/db';
 import type { CleanupCandidate, CleanupFeatures } from '../shared/types';
-import { getStateMap } from '../background/state';
+import { getIdleState, getStateMap } from '../background/state';
 import { getDomainStats } from './aggregate';
 import { getEmbedding } from './embedding-train';
 import {
@@ -51,6 +51,7 @@ export async function scoreCleanupCandidates(
   const bandit = await getBandit();
   const stateMap = await getStateMap();
   const embedding = await getEmbedding();
+  const idleState = await getIdleState();
 
   // Pre-compute same-domain counts and the set of "engaged" open domains —
   // these are what cleanup similarity is measured against.
@@ -60,6 +61,40 @@ export async function scoreCleanupCandidates(
     const d = extractDomain(t.url);
     domainCount.set(d, (domainCount.get(d) ?? 0) + 1);
     if (d && (t.pinned || t.active)) engagedOpenDomains.add(d);
+  }
+
+  // Per-window stats — count tabs and same-domain tabs per window. Cheap;
+  // single pass keeps it O(n).
+  const windowTabCount = new Map<number, number>();
+  const windowDomainCount = new Map<string, number>(); // key: `${windowId}|${domain}`
+  for (const t of tabs) {
+    if (t.windowId === undefined) continue;
+    windowTabCount.set(t.windowId, (windowTabCount.get(t.windowId) ?? 0) + 1);
+    const d = extractDomain(t.url);
+    if (!d) continue;
+    const k = `${t.windowId}|${d}`;
+    windowDomainCount.set(k, (windowDomainCount.get(k) ?? 0) + 1);
+  }
+
+  // Pre-fetch the focused window id and tab-group titles. These are the
+  // only async chrome.* calls we need for the new features and they're
+  // cheap (one round-trip each, regardless of tab count).
+  let activeWindowId: number | undefined;
+  try {
+    const win = await chrome.windows.getLastFocused({ populate: false });
+    activeWindowId = win?.id;
+  } catch {
+    // chrome.windows can throw in restricted contexts — leave undefined.
+  }
+  const groupTitleById: Record<number, string | undefined> = {};
+  try {
+    if (chrome.tabGroups?.query) {
+      const groups = await chrome.tabGroups.query({});
+      for (const g of groups) groupTitleById[g.id] = g.title;
+    }
+  } catch {
+    // chrome.tabGroups requires the tabGroups permission (we have it) but
+    // can still fail in some flows — degrade gracefully.
   }
 
   // Hardcoded dashboard URL pattern — we can compute it via chrome.runtime
@@ -80,6 +115,7 @@ export async function scoreCleanupCandidates(
     if (tab.id === undefined) continue;
     if (tab.pinned) continue; // Never suggest closing pinned tabs.
     if (tab.active) continue; // Don't suggest closing the focused tab.
+    if (tab.audible) continue; // Hard rule: never auto-flag a media-playing tab.
     if (dashboardUrlMatch(tab.url)) continue; // Never suggest closing the dashboard itself.
     const domain = extractDomain(tab.url);
     if (!domain) continue;
@@ -91,6 +127,7 @@ export async function scoreCleanupCandidates(
     const stats = await getDomainStats(domain);
     const otherOpens = Array.from(engagedOpenDomains).filter((d) => d !== domain);
     const embedSim = embedding.meanCosine(domain, otherOpens);
+    const winId = tab.windowId;
     const features = buildCleanupFeatures({
       tab,
       state,
@@ -98,6 +135,12 @@ export async function scoreCleanupCandidates(
       sameDomainOpenCount: domainCount.get(domain) ?? 1,
       embedSimToOpen: embedSim,
       now,
+      windowTabCount: winId !== undefined ? windowTabCount.get(winId) : undefined,
+      windowSameDomainCount:
+        winId !== undefined ? windowDomainCount.get(`${winId}|${domain}`) : undefined,
+      activeWindowId,
+      groupTitleById,
+      idleState,
     });
     const baseScore = model.predict(vectorFromCleanup(features));
     const reason = summarizeCleanupReason(features);
@@ -125,21 +168,32 @@ export async function trainCleanupFeedback(
   features: CleanupFeatures,
   domain: string,
   reason: string,
-  action: 'accepted' | 'dismissed' | 'snoozed',
+  action: 'accepted' | 'dismissed' | 'snoozed' | 'dismissed-after-suggestion',
 ): Promise<void> {
   const model = await getModel();
   const bandit = await getBandit();
   const armId = banditArmId(domain, reason);
 
-  // Label: accepted = positive (yes, this should have been closed),
-  // dismissed = explicit negative, snoozed = soft negative.
+  // Label: accepted = positive (yes, this should have been closed); all
+  // other actions are negatives. Weight conveys signal strength:
+  //   - snoozed: 0.5 (soft "ask later")
+  //   - dismissed-after-suggestion: 2.0 (high-value correction — model
+  //     was confident enough to flag this in the smart-cleanup batch and
+  //     the user explicitly toggled it off)
+  //   - accepted / dismissed: 1.0
   const label = action === 'accepted' ? 1 : 0;
-  const weight = action === 'snoozed' ? 0.5 : 1.0;
+  const weight =
+    action === 'snoozed'
+      ? 0.5
+      : action === 'dismissed-after-suggestion'
+        ? 2.0
+        : 1.0;
   model.update(vectorFromCleanup(features), label, weight);
 
   if (action === 'accepted') bandit.recordAccept(armId);
-  else if (action === 'dismissed') bandit.recordDismiss(armId);
-  else bandit.recordIgnore(armId, 0.5);
+  else if (action === 'dismissed' || action === 'dismissed-after-suggestion') {
+    bandit.recordDismiss(armId);
+  } else bandit.recordIgnore(armId, 0.5);
 
   await db.feedback.add({
     ts: Date.now(),

@@ -41,7 +41,11 @@ export async function reportCleanupFeedback(
   domain: string,
   reason: string,
   features: CleanupFeatures,
-  action: 'accepted' | 'dismissed' | 'snoozed',
+  action:
+    | 'accepted'
+    | 'dismissed'
+    | 'snoozed'
+    | 'dismissed-after-suggestion',
 ): Promise<void> {
   await callRpc({ kind: 'feedback.cleanup', domain, reason, features, action });
 }

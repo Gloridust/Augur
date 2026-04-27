@@ -22,6 +22,11 @@ export interface LogRegState {
   stats: Welford[];
   lr: number;
   l2: number;
+  // L1 (sparsity) coefficient — applied via proximal soft-thresholding
+  // on the standardized weights after each gradient step. Encourages the
+  // model to drive irrelevant features to exactly zero, which both reduces
+  // noise and surfaces "what mattered" in the debug panel.
+  l1: number;
   trainedSamples: number;
   positiveSamples: number;
   // Platt calibration: P_calibrated = sigmoid(calibA * z + calibB), where z
@@ -29,37 +34,76 @@ export interface LogRegState {
   calibA: number;
   calibB: number;
   calibSamples: number;
+  // Adam optimizer state (per-parameter first/second moment estimates +
+  // global timestep). Replaces vanilla SGD. Keeps the model stable across
+  // changes in feature scale and noisy gradients.
+  adamM: number[];
+  adamV: number[];
+  adamMBias: number;
+  adamVBias: number;
+  adamT: number;
 }
 
 const CALIB_WARMUP = 20;
 const CALIB_LR = 0.01;
+const ADAM_BETA1 = 0.9;
+const ADAM_BETA2 = 0.999;
+const ADAM_EPS = 1e-8;
+
+function softThreshold(w: number, alpha: number): number {
+  if (w > alpha) return w - alpha;
+  if (w < -alpha) return w + alpha;
+  return 0;
+}
 
 export class OnlineLogReg {
   state: LogRegState;
 
-  constructor(featureCount: number, opts?: { lr?: number; l2?: number }) {
+  constructor(
+    featureCount: number,
+    opts?: { lr?: number; l2?: number; l1?: number },
+  ) {
     this.state = {
       weights: new Array(featureCount).fill(0),
       bias: 0,
       stats: Array.from({ length: featureCount }, () => welfordEmpty()),
-      lr: opts?.lr ?? 0.05,
+      lr: opts?.lr ?? 0.01,
       l2: opts?.l2 ?? 1e-4,
+      l1: opts?.l1 ?? 1e-5,
       trainedSamples: 0,
       positiveSamples: 0,
       calibA: 1,
       calibB: 0,
       calibSamples: 0,
+      adamM: new Array(featureCount).fill(0),
+      adamV: new Array(featureCount).fill(0),
+      adamMBias: 0,
+      adamVBias: 0,
+      adamT: 0,
     };
   }
 
   static load(raw: LogRegState): OnlineLogReg {
-    const m = new OnlineLogReg(raw.weights.length);
+    const n = raw.weights.length;
+    const m = new OnlineLogReg(n);
     m.state = {
       ...raw,
       // Backwards-compat: pre-calibration models won't have these fields.
       calibA: raw.calibA ?? 1,
       calibB: raw.calibB ?? 0,
       calibSamples: raw.calibSamples ?? 0,
+      // Adam state may be missing on pre-Adam saves; start fresh moments
+      // but keep existing weights so the model isn't reset.
+      adamM: Array.isArray(raw.adamM) && raw.adamM.length === n
+        ? raw.adamM
+        : new Array(n).fill(0),
+      adamV: Array.isArray(raw.adamV) && raw.adamV.length === n
+        ? raw.adamV
+        : new Array(n).fill(0),
+      adamMBias: raw.adamMBias ?? 0,
+      adamVBias: raw.adamVBias ?? 0,
+      adamT: raw.adamT ?? 0,
+      l1: raw.l1 ?? 1e-5,
     };
     return m;
   }
@@ -112,10 +156,40 @@ export class OnlineLogReg {
     const err = (p - y) * weight;
     const lr = this.state.lr;
     const l2 = this.state.l2;
+    const l1 = this.state.l1;
+
+    // Adam step. Replaces vanilla SGD — keeps progress stable when
+    // gradients vary in scale (common with our heterogeneous features).
+    this.state.adamT += 1;
+    const t = this.state.adamT;
+    const biasCorr1 = 1 - Math.pow(ADAM_BETA1, t);
+    const biasCorr2 = 1 - Math.pow(ADAM_BETA2, t);
+
     for (let i = 0; i < s.length; i++) {
-      this.state.weights[i] -= lr * (err * s[i] + l2 * this.state.weights[i]);
+      // Gradient: d/dw = err * x_std + l2 * w  (L1 is applied as a
+      // proximal step after, not added to the gradient).
+      const g = err * s[i] + l2 * this.state.weights[i];
+      this.state.adamM[i] = ADAM_BETA1 * this.state.adamM[i] + (1 - ADAM_BETA1) * g;
+      this.state.adamV[i] =
+        ADAM_BETA2 * this.state.adamV[i] + (1 - ADAM_BETA2) * g * g;
+      const mHat = this.state.adamM[i] / biasCorr1;
+      const vHat = this.state.adamV[i] / biasCorr2;
+      const step = (lr * mHat) / (Math.sqrt(vHat) + ADAM_EPS);
+      const wTentative = this.state.weights[i] - step;
+      // Proximal soft-threshold for L1 — drives small weights to exactly 0.
+      this.state.weights[i] = softThreshold(wTentative, lr * l1);
     }
-    this.state.bias -= lr * err;
+
+    // Bias gets the same Adam treatment but no L1 (we want a free intercept).
+    const gBias = err;
+    this.state.adamMBias =
+      ADAM_BETA1 * this.state.adamMBias + (1 - ADAM_BETA1) * gBias;
+    this.state.adamVBias =
+      ADAM_BETA2 * this.state.adamVBias + (1 - ADAM_BETA2) * gBias * gBias;
+    const mHatB = this.state.adamMBias / biasCorr1;
+    const vHatB = this.state.adamVBias / biasCorr2;
+    this.state.bias -= (lr * mHatB) / (Math.sqrt(vHatB) + ADAM_EPS);
+
     this.state.trainedSamples += 1;
     if (y === 1) this.state.positiveSamples += 1;
 

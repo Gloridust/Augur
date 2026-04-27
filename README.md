@@ -163,25 +163,36 @@ Every recommendation features include: · 每条推荐都包含：
 | **Frecency · 衰减频次** | `freqDecay` (Σ exp(-Δt/τ), τ=14d) · 域名级访问衰减 |
 | **Engagement · 投入度** | `avgFocusMs`, `domainCloseQuickRate`, `domainCloseWithoutFocusRate` (Cleanup head only) |
 | **Temporal · 时段** | `hourMatch`, `dowMatch` — softmaxed hour & day-of-week histograms · 24×7 直方图 softmax |
+| **Cyclic time · 周期编码** | `hourSin`, `hourCos`, `dowSin`, `dowCos` — sin/cos projection so 23h ≈ 0h · 让模型在邻近时段间平滑泛化 |
 | **Recency · 最近性** | `recencyHours` since last visit |
 | **Time-series · 时序** | `visitVelocity` (24h vs 14d baseline), `sessionContext` (visited in last 30 min) |
 | **Co-occurrence · 共现** | `cooccurrenceWithFocused` — pair counts within 5-min windows, decayed (τ=30d) |
 | **Embedding · 嵌入** | `embedSimToFocused` — cosine in 32-dim skip-gram space, retrained every 12h on co-occurrence |
 | **State · 状态** | `isCurrentlyOpen`, `isPinnedSomewhere` |
 
-The cleanup head additionally uses tab-state features: `tabAgeMs`, `timeSinceFocusMs`, `focusMs`, `focusCount`, `focusRate`, `isPinned`, `isGrouped`, `sameDomainOpenCount`, `embedSimToOpen`. · 清理头额外使用每个标签自身的状态特征。
+The cleanup head additionally uses per-tab + per-window state: `tabAgeMs`, `timeSinceFocusMs`, `focusMs`, `focusCount`, `focusRate`, `isPinned`, `isGrouped`, `sameDomainOpenCount`, `embedSimToOpen`, `isDiscarded`, `tabIndex` (normalized position in window strip), `isInActiveWindow`, `windowSameDomainCount`, `isInNamedGroup`, `navCount` (in-tab navigations since open), `isIdle` (system-level chrome.idle state). Tabs with `tab.audible === true` are hard-excluded from candidates — never auto-flagged regardless of model score. · 清理头额外用每个标签 + 所在窗口的状态特征；正在播放音视频的 tab 被硬性排除，不会被模型勾选。
 
 ### Online training · 在线学习
 
 ```
 predict      = sigmoid(calibA · z + calibB)              ← Platt calibration
             where z = w·standardize(x) + bias
-update(x, y) = SGD step on z (lr=0.05, L2=1e-4) +
-               SGD step on (calibA, calibB) once trainedSamples ≥ 20
-              + Bandit α += accept ? 1 : 0, β += dismiss ? 1 : 0
+
+update(x, y, weight) =
+  Adam step on z (lr=0.01, β1=0.9, β2=0.999, ε=1e-8)
+  + L2 (1e-4) added to gradient
+  + L1 (1e-5) proximal soft-threshold on weights → sparsity
+  + Platt SGD on (calibA, calibB) once trainedSamples ≥ 20
+  + Bandit α += accept ? weight : 0, β += dismiss ? weight : 0
+
+weight = 0.5  (snoozed)
+       | 1.0  (accepted | dismissed)
+       | 2.0  (dismissed-after-suggestion — user toggled off an AI auto-pick)
 ```
 
 The Beta-Bernoulli bandit per `(domain, reason)` arm makes "you keep ignoring this kind of suggestion → stop suggesting it" emerge from data, no hand-coded rules. · 按 `(domain, reason)` 维护 Beta 后验，「你一直忽略这种建议 → 不再推荐」自然从数据里浮现，零规则。
+
+Smart-cleanup auto-select uses an **uncertainty-rejection threshold** of 0.60 calibrated probability (vs. 0.55 for "show as candidate") — predictions in the [0.55, 0.60) band are still surfaced in the cleanup card but never auto-checked, since the cost of a false positive is higher when the user might one-click close them. · 一键清理的自动勾选用 0.60 的不确定区拒绝阈值（候选列表是 0.55），落在 [0.55, 0.60) 的预测仍会显示但不会被自动选中——一键场景下误关代价更高。
 
 ---
 

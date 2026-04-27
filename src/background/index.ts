@@ -71,6 +71,7 @@ function freshState(tab: chrome.tabs.Tab, ts: number): TabRuntimeState {
     focusCount: 0,
     pinned: tab.pinned ?? false,
     groupId: tab.groupId ?? -1,
+    navigationCount: 0,
   };
 }
 
@@ -261,6 +262,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       title,
       pinned: tab.pinned ?? prev.pinned,
       groupId: tab.groupId ?? prev.groupId,
+      navigationCount: (prev.navigationCount ?? 0) + 1,
     });
     await logEvent({
       type: 'navigate',

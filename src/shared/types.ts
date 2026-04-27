@@ -47,6 +47,10 @@ export interface TabRuntimeState {
   focusCount: number;
   pinned: boolean;
   groupId: number;
+  // Number of in-tab URL changes since the tab was created (incremented on
+  // each `chrome.tabs.onUpdated` navigation). Multi-page sessions ≠ static
+  // one-shot tabs — useful cleanup signal.
+  navigationCount?: number;
 }
 
 export interface DataSummary {
@@ -109,6 +113,35 @@ export interface CleanupFeatures {
   embedSimToOpen: number;
   hour: number;
   dow: number;
+  // ── Cyclic time encoding — sin/cos of hour and day-of-week. Continuous
+  //    space lets the model generalize across nearby hours (8am ≈ 9am)
+  //    instead of learning each bin independently.
+  hourSin: number;
+  hourCos: number;
+  dowSin: number;
+  dowCos: number;
+  // ── Tab-level state Chrome reports directly. `audible` triggers a hard
+  //    exclusion in scoreCleanupCandidates; `discarded` is a soft signal
+  //    (Chrome already unloaded it = user hasn't touched it).
+  isDiscarded: number;
+  // ── Position in the window's tab strip, normalized to 0..1. Rightmost
+  //    tabs are usually newer / more transient.
+  tabIndex: number;
+  // ── Whether this tab lives in the currently focused window — focused
+  //    window tabs tend to be active workflow.
+  isInActiveWindow: number;
+  // ── Count of tabs in the same window with the same domain. High counts
+  //    signal duplicates / scratch tabs.
+  windowSameDomainCount: number;
+  // ── Tab is in a tab group AND that group has a non-empty title.
+  //    Named groups are intentional buckets — strong "keep" signal.
+  isInNamedGroup: number;
+  // ── How many in-tab navigations have happened (URL changes since open).
+  //    Workflow tabs accumulate navigations; one-shot tabs don't.
+  navCount: number;
+  // ── User idle right now (system idle / locked). Tabs sitting open while
+  //    the user is away are weaker signals than tabs ignored while active.
+  isIdle: number;
 }
 
 export interface RecommendFeatures {
@@ -126,6 +159,13 @@ export interface RecommendFeatures {
   sessionContext: number;
   isCurrentlyOpen: number;
   isPinnedSomewhere: number;
+  // Cyclic time encoding (matches CleanupFeatures) — global "what time
+  // does this user usually want X" signal, complementing the per-domain
+  // hourMatch/dowMatch softmaxes above.
+  hourSin: number;
+  hourCos: number;
+  dowSin: number;
+  dowCos: number;
 }
 
 export interface RecommendationContext {
@@ -154,7 +194,16 @@ export interface OpenCandidate {
 export interface FeedbackEvent {
   ts: number;
   surface: 'cleanup' | 'open';
-  action: 'accepted' | 'dismissed' | 'snoozed' | 'ignored';
+  // 'dismissed-after-suggestion' = the model auto-flagged this tab in the
+  // smart-cleanup batch and the user explicitly unchecked it. Trained with
+  // 2× the weight of a regular dismiss because it directly contradicts a
+  // confident model prediction.
+  action:
+    | 'accepted'
+    | 'dismissed'
+    | 'snoozed'
+    | 'ignored'
+    | 'dismissed-after-suggestion';
   domain?: string;
   url?: string;
   features?: Record<string, number>;

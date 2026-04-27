@@ -23,7 +23,14 @@ export type RpcRequest =
       domain: string;
       reason: string;
       features: CleanupFeatures;
-      action: 'accepted' | 'dismissed' | 'snoozed';
+      // 'dismissed-after-suggestion' is sent when the user unchecks a tab
+      // that the smart-cleanup batch had auto-selected — trained at 2x
+      // weight in cleanup.trainCleanupFeedback.
+      action:
+        | 'accepted'
+        | 'dismissed'
+        | 'snoozed'
+        | 'dismissed-after-suggestion';
     }
   | {
       kind: 'feedback.open';

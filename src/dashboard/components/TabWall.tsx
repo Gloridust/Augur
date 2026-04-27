@@ -178,17 +178,20 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
   };
 
   // For every tab the model suggested in the current smart-cleanup batch,
-  // emit a feedback row: 'accepted' if the tab is still selected (user
-  // agreed), 'dismissed' if the user unchecked it (user disagreed). The
-  // dismissed rows are the high-value correction signal — they tell the
-  // model "you flagged this confidently and were wrong."
+  // emit a feedback row:
+  //   - still selected → 'accepted' (user agreed with the model)
+  //   - unchecked     → 'dismissed-after-suggestion' (high-value
+  //     correction; trained at 2x weight in trainCleanupFeedback because
+  //     it directly contradicts a confident model prediction)
   const flushSmartCleanupFeedback = async (
     finalSelected: Set<number>,
   ): Promise<void> => {
     if (aiSelected.size === 0) return;
     const tasks: Promise<void>[] = [];
     for (const [tabId, candidate] of aiSelected) {
-      const action = finalSelected.has(tabId) ? 'accepted' : 'dismissed';
+      const action = finalSelected.has(tabId)
+        ? 'accepted'
+        : 'dismissed-after-suggestion';
       const domain = extractDomain(candidate.tab.url);
       if (!domain) continue;
       tasks.push(
@@ -236,9 +239,17 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
         const openIds = new Set(
           tabs.map((tb) => tb.id).filter((x): x is number => x !== undefined),
         );
+        // Uncertainty rejection: backend filters at >= 0.55 (the candidate
+        // threshold), but auto-select demands stricter confidence — only
+        // tabs at >= 0.60 calibrated probability go into the auto-checked
+        // batch. The 0.55–0.60 band stays visible elsewhere (InlineCleanupCard)
+        // but doesn't get prefilled here, where the cost of a false
+        // positive is higher (user might miss-close an important tab).
+        const AUTO_SELECT_THRESHOLD = 0.6;
         const map = new Map<number, CleanupCandidate>();
         const candidateIds = new Set<number>();
         for (const c of candidates) {
+          if (c.score < AUTO_SELECT_THRESHOLD) continue;
           if (c.tab.id !== undefined && openIds.has(c.tab.id)) {
             map.set(c.tab.id, c);
             candidateIds.add(c.tab.id);
