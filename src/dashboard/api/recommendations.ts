@@ -25,6 +25,13 @@ export async function fetchCleanupRecommendations(): Promise<CleanupCandidate[]>
   return r.ok && r.kind === 'recommend.cleanup' ? r.data : [];
 }
 
+// Returns ALL cleanup candidates above the model's confidence threshold (no
+// top-5 cap). Powers the TabWall "Smart cleanup" button.
+export async function fetchAllCleanupCandidates(): Promise<CleanupCandidate[]> {
+  const r = await callRpc({ kind: 'recommend.cleanup.all' });
+  return r.ok && r.kind === 'recommend.cleanup.all' ? r.data : [];
+}
+
 export async function fetchInsights(): Promise<InsightsBundle | null> {
   const r = await callRpc({ kind: 'insights.get' });
   return r.ok && r.kind === 'insights.get' ? r.data : null;

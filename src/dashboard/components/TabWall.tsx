@@ -24,8 +24,15 @@ import LayersIcon from '@mui/icons-material/Layers';
 import LanguageIcon from '@mui/icons-material/Language';
 import WindowIcon from '@mui/icons-material/Window';
 import SearchIcon from '@mui/icons-material/Search';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { activateTab, closeTabs, useTabs } from '../hooks/useTabs';
-import { stashItems } from '../api/recommendations';
+import {
+  fetchAllCleanupCandidates,
+  reportCleanupFeedback,
+  stashItems,
+} from '../api/recommendations';
+import { extractDomain } from '../../shared/db';
+import type { CleanupCandidate } from '../../shared/types';
 import { usePins } from '../hooks/usePins';
 import { notifyStashChanged } from './StashSection';
 import { InlineCleanupCard } from './InlineCleanupCard';
@@ -69,6 +76,12 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
   const { groups, windowGroups, tabs } = useTabs();
   const { isPinned, add: pinAdd, remove: pinRemove } = usePins();
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  // Tabs the cleanup model recommended in the current "smart cleanup" batch.
+  // Persists independently of `selected` so the coral glow stays visible
+  // even after the user unchecks a row — the unchecked-but-glowing state is
+  // exactly the signal we need to harvest as a correction.
+  const [aiSelected, setAiSelected] = useState<Map<number, CleanupCandidate>>(new Map());
+  const [smartLoading, setSmartLoading] = useState(false);
   const [internalFilter, setInternalFilter] = useState('');
   const filter = externalFilter ?? internalFilter;
   const [mode, setMode] = useState<GroupMode>(() => {
@@ -157,12 +170,81 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     });
   };
 
+  // For every tab the model suggested in the current smart-cleanup batch,
+  // emit a feedback row: 'accepted' if the tab is still selected (user
+  // agreed), 'dismissed' if the user unchecked it (user disagreed). The
+  // dismissed rows are the high-value correction signal — they tell the
+  // model "you flagged this confidently and were wrong."
+  const flushSmartCleanupFeedback = async (
+    finalSelected: Set<number>,
+  ): Promise<void> => {
+    if (aiSelected.size === 0) return;
+    const tasks: Promise<void>[] = [];
+    for (const [tabId, candidate] of aiSelected) {
+      const action = finalSelected.has(tabId) ? 'accepted' : 'dismissed';
+      const domain = extractDomain(candidate.tab.url);
+      if (!domain) continue;
+      tasks.push(
+        reportCleanupFeedback(domain, candidate.reason, candidate.features, action).catch(
+          () => undefined,
+        ),
+      );
+    }
+    await Promise.all(tasks);
+  };
+
   const closeSelected = async () => {
     const ids = Array.from(selected);
+    await flushSmartCleanupFeedback(selected);
     await closeTabs(ids);
     setSelected(new Set());
+    setAiSelected(new Map());
     if (ids.length > 0) {
       toast({ message: t('toasts.tabsClosed', { count: ids.length }), severity: 'success' });
+    }
+  };
+
+  // Manual "Clear" button: if the user dismisses an AI batch entirely
+  // without closing anything, treat every AI-selected tab as 'dismissed' —
+  // they explicitly walked away from the model's suggestion.
+  const clearSelection = () => {
+    void flushSmartCleanupFeedback(new Set());
+    setSelected(new Set());
+    setAiSelected(new Map());
+  };
+
+  const runSmartCleanup = async () => {
+    if (smartLoading) return;
+    setSmartLoading(true);
+    try {
+      const candidates = await fetchAllCleanupCandidates();
+      if (candidates.length === 0) {
+        toast({ message: t('cleanup.smartNoMatches'), severity: 'info' });
+        return;
+      }
+      // Restrict to candidates that actually exist as open tabs right now
+      // (the model query is async; tabs can close in between).
+      const openIds = new Set(tabs.map((tb) => tb.id).filter((x): x is number => x !== undefined));
+      const map = new Map<number, CleanupCandidate>();
+      const nextSelected = new Set(selected);
+      for (const c of candidates) {
+        if (c.tab.id !== undefined && openIds.has(c.tab.id)) {
+          map.set(c.tab.id, c);
+          nextSelected.add(c.tab.id);
+        }
+      }
+      if (map.size === 0) {
+        toast({ message: t('cleanup.smartNoMatches'), severity: 'info' });
+        return;
+      }
+      setAiSelected(map);
+      setSelected(nextSelected);
+      toast({
+        message: t('cleanup.smartFound', { count: map.size }),
+        severity: 'success',
+      });
+    } finally {
+      setSmartLoading(false);
     }
   };
 
@@ -300,6 +382,27 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
             : t('tabs.windowCount', { count: windowGroups.length })}
         </Typography>
         <Box sx={{ flex: 1 }} />
+        <Tooltip title={t('cleanup.smartTooltip')}>
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              onClick={runSmartCleanup}
+              disabled={smartLoading || tabs.length === 0}
+              startIcon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />}
+              sx={{
+                textTransform: 'none',
+                borderRadius: 999,
+                fontSize: 12,
+                py: 0.25,
+                px: 1.25,
+              }}
+            >
+              {t('cleanup.smartButton')}
+            </Button>
+          </span>
+        </Tooltip>
         <ToggleButtonGroup
           size="small"
           exclusive
@@ -384,7 +487,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
             label={t('tabs.selected', { count: selected.size })}
             color="primary"
           />
-          <Button size="small" onClick={() => setSelected(new Set())} variant="text">
+          <Button size="small" onClick={clearSelection} variant="text">
             {t('tabs.clearSelection')}
           </Button>
           <Button
@@ -569,6 +672,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
                 <Stack spacing={0} sx={{ flex: 1 }}>
                   {group.tabs.map((tab) => {
                     const isFocused = focusedTabId === tab.id;
+                    const isAiSuggested = tab.id !== undefined && aiSelected.has(tab.id);
                     return (
                       <Box
                         key={tab.id}
@@ -581,14 +685,38 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
                           px: sizes.rowPaddingX,
                           py: sizes.rowPaddingY,
                           borderRadius: 1.5,
-                          transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
+                          position: 'relative',
+                          transition:
+                            'background-color 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 220ms ease',
                           backgroundColor: isFocused
                             ? 'var(--mui-palette-action-selected)'
-                            : 'transparent',
+                            : isAiSuggested
+                              ? 'rgba(194, 65, 12, 0.06)'
+                              : 'transparent',
                           outline: isFocused
                             ? '2px solid var(--mui-palette-primary-main)'
                             : 'none',
                           outlineOffset: -2,
+                          // Coral micro-glow marking AI-suggested tabs.
+                          // Persistent until the user closes/clears, even
+                          // if they uncheck the row — that's the visual
+                          // contract for "model proposed this".
+                          boxShadow: isAiSuggested
+                            ? '0 0 0 1px rgba(194, 65, 12, 0.32), 0 0 12px rgba(194, 65, 12, 0.30)'
+                            : 'none',
+                          animation: isAiSuggested
+                            ? 'augur-ai-glow 2.4s ease-in-out infinite'
+                            : 'none',
+                          '@keyframes augur-ai-glow': {
+                            '0%, 100%': {
+                              boxShadow:
+                                '0 0 0 1px rgba(194, 65, 12, 0.30), 0 0 10px rgba(194, 65, 12, 0.22)',
+                            },
+                            '50%': {
+                              boxShadow:
+                                '0 0 0 1px rgba(194, 65, 12, 0.40), 0 0 16px rgba(194, 65, 12, 0.36)',
+                            },
+                          },
                           '&:hover': {
                             backgroundColor: 'var(--mui-palette-action-hover)',
                           },

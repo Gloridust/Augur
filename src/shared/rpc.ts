@@ -17,6 +17,7 @@ import type { PinRerankInput, PinRerankRow } from '../ml/pins';
 export type RpcRequest =
   | { kind: 'recommend.open' }
   | { kind: 'recommend.cleanup' }
+  | { kind: 'recommend.cleanup.all'; limit?: number }
   | {
       kind: 'feedback.cleanup';
       domain: string;
@@ -55,6 +56,7 @@ export type RpcRequest =
 export type RpcResponse =
   | { ok: true; kind: 'recommend.open'; data: OpenCandidate[] }
   | { ok: true; kind: 'recommend.cleanup'; data: CleanupCandidate[] }
+  | { ok: true; kind: 'recommend.cleanup.all'; data: CleanupCandidate[] }
   | { ok: true; kind: 'insights.get'; data: InsightsBundle }
   | { ok: true; kind: 'data.summary'; data: DataSummary }
   | { ok: true; kind: 'data.export'; data: DataDump }

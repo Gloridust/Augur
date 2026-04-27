@@ -44,6 +44,7 @@ function banditArmId(domain: string, reason: string): string {
 export async function scoreCleanupCandidates(
   tabs: chrome.tabs.Tab[],
   now: number = Date.now(),
+  limit: number = MAX_SUGGESTIONS,
 ): Promise<CleanupCandidate[]> {
   if (tabs.length === 0) return [];
   const model = await getModel();
@@ -106,7 +107,7 @@ export async function scoreCleanupCandidates(
   }
 
   candidates.sort((a, b) => b.score - a.score);
-  return candidates.filter((c) => c.score >= SCORE_THRESHOLD).slice(0, MAX_SUGGESTIONS);
+  return candidates.filter((c) => c.score >= SCORE_THRESHOLD).slice(0, limit);
 }
 
 export async function recordCleanupImpressions(

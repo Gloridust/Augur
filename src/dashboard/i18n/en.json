@@ -61,7 +61,12 @@
     "snooze": "Ask later",
     "stash": "Stash for later",
     "acceptAll": "Close all suggested",
-    "idleFor": "idle {{duration}}"
+    "idleFor": "idle {{duration}}",
+    "smartButton": "Smart cleanup",
+    "smartTooltip": "Auto-select tabs the model thinks you won't need soon. Uncheck any false positives — the model learns from your corrections.",
+    "smartFound_one": "Selected {{count}} tab the model wants to close — uncheck any you want to keep.",
+    "smartFound_other": "Selected {{count}} tabs the model wants to close — uncheck any you want to keep.",
+    "smartNoMatches": "Model isn't confident about closing any of your open tabs right now."
   },
   "stash": {
     "open": "Open and remove from stash",

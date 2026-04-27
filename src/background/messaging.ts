@@ -78,6 +78,16 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         await recordCleanupImpressions(data);
         return { ok: true, kind: 'recommend.cleanup', data };
       }
+      case 'recommend.cleanup.all': {
+        // Smart cleanup button — return all candidates above threshold (no
+        // top-5 cap), so users with many zombie tabs can sweep them at once.
+        // Hard ceiling at 50 to avoid pathological cases.
+        const tabs = await chrome.tabs.query({});
+        const cap = Math.min(req.limit ?? 50, 50);
+        const data = await scoreCleanupCandidates(tabs, Date.now(), cap);
+        await recordCleanupImpressions(data);
+        return { ok: true, kind: 'recommend.cleanup.all', data };
+      }
       case 'feedback.cleanup': {
         await trainCleanupFeedback(req.features, req.domain, req.reason, req.action);
         return { ok: true, kind: 'ack' };

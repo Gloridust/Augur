@@ -61,7 +61,12 @@
     "snooze": "稍后再提醒",
     "stash": "暂存稍后再看",
     "acceptAll": "全部关闭",
-    "idleFor": "已闲置 {{duration}}"
+    "idleFor": "已闲置 {{duration}}",
+    "smartButton": "一键清理",
+    "smartTooltip": "让模型自动勾选它认为你短时间不再需要的 tab。可以取消勾选误判的——你的修正会反过来训练模型。",
+    "smartFound_one": "已勾选模型建议关闭的 {{count}} 个 tab——可以手动取消想保留的。",
+    "smartFound_other": "已勾选模型建议关闭的 {{count}} 个 tab——可以手动取消想保留的。",
+    "smartNoMatches": "模型现在对关闭任何打开的 tab 都没有把握。"
   },
   "stash": {
     "open": "打开并从暂存移除",
