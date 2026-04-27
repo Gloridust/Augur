@@ -301,7 +301,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // URL didn't change but the title did — keep state title fresh; no event.
     await setTabState({ ...prev, title });
   } else if (!prev) {
+    // First time we see this tab AS a tracked URL. `chrome.tabs.onCreated`
+    // fired earlier with no URL (Chrome's standard sequence: create blank
+    // tab → navigate → load complete), so the create-time isTrackable
+    // check returned early and no 'open' event was logged. Log it now —
+    // otherwise db.events accumulates only 'navigate' events and the
+    // today recap's `tabsOpened` count stays stuck at 0.
     await setTabState(freshState(tab, Date.now()));
+    await logEvent({
+      type: 'open',
+      tabId,
+      windowId: tab.windowId,
+      url,
+      domain: newDomain,
+      title,
+      openedFrom: classifyOpenSource(tab),
+    });
   }
 });
 

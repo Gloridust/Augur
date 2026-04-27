@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Card, Stack, Typography } from '@mui/material';
+import { Box, Stack, Typography } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import LanguageIcon from '@mui/icons-material/Language';
 import HourglassTopIcon from '@mui/icons-material/HourglassTop';
@@ -91,55 +91,39 @@ export function TodayRecap() {
     : '—';
 
   return (
-    <Card
-      sx={{
-        p: 2,
-        backgroundColor: 'var(--mui-palette-action-hover)',
-        border: '1px solid var(--mui-palette-divider)',
-      }}
+    <Stack
+      direction="row"
+      spacing={{ xs: 2.5, md: 4 }}
+      useFlexGap
+      flexWrap="wrap"
+      sx={{ px: 0.5 }}
     >
-      <Stack
-        direction="row"
-        spacing={3}
-        useFlexGap
-        flexWrap="wrap"
-        divider={
-          <Box
-            sx={{
-              width: '1px',
-              alignSelf: 'stretch',
-              backgroundColor: 'var(--mui-palette-divider)',
-            }}
-          />
-        }
-      >
-        <Stat
-          icon={<OpenInNewIcon fontSize="small" />}
-          value={data.tabsOpened}
-          label={t('today.tabsOpened')}
-        />
-        <Stat
-          icon={<LanguageIcon fontSize="small" />}
-          value={data.domainsVisited}
-          label={t('today.domainsVisited')}
-        />
-        <Stat
-          icon={<HourglassTopIcon fontSize="small" />}
-          value={`${data.focusMinutes}m`}
-          label={t('today.focusMinutes')}
-        />
-        <Stat
-          icon={<StarIcon fontSize="small" />}
-          value={top.value}
-          label={t('today.topDomain')}
-          hint={top.hint}
-        />
-        <Stat
-          icon={<HourglassTopIcon fontSize="small" />}
-          value={busy}
-          label={t('today.busiestHour')}
-        />
-      </Stack>
-    </Card>
+      <Stat
+        icon={<OpenInNewIcon fontSize="small" />}
+        value={data.tabsOpened}
+        label={t('today.tabsOpened')}
+      />
+      <Stat
+        icon={<LanguageIcon fontSize="small" />}
+        value={data.domainsVisited}
+        label={t('today.domainsVisited')}
+      />
+      <Stat
+        icon={<HourglassTopIcon fontSize="small" />}
+        value={`${data.focusMinutes}m`}
+        label={t('today.focusMinutes')}
+      />
+      <Stat
+        icon={<StarIcon fontSize="small" />}
+        value={top.value}
+        label={t('today.topDomain')}
+        hint={top.hint}
+      />
+      <Stat
+        icon={<HourglassTopIcon fontSize="small" />}
+        value={busy}
+        label={t('today.busiestHour')}
+      />
+    </Stack>
   );
 }
