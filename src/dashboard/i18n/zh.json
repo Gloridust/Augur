@@ -273,6 +273,11 @@
     "wipe": "清除全部数据",
     "wipeConfirm": "确认清除",
     "cancel": "取消",
+    "historyBootstrap": "从浏览器历史导入",
+    "historyBootstrapTooltip": "把过去 30 天的 Chrome 历史回放到 Augur 事件日志，让模型从真实分布开始学。首次安装时会自动跑一次——点这里可以重新导入。",
+    "historyBootstrapDone": "已导入 {{events}} 个事件，覆盖 {{domains}} 个域名。模型正在重新聚合。",
+    "historyBootstrapSkipped": "跳过——已经导入过，或当前历史为空。",
+    "historyBootstrapFailed": "无法读取浏览器历史，请确认扩展仍持有 history 权限。",
     "privacyHint": "清除会删掉所有事件、模型权重、bandit 后验、暂存内容，并重置首次引导。"
   },
   "debug": {

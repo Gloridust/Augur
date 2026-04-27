@@ -221,9 +221,20 @@ Augur is local-first with one shadow on its conscience: it currently fetches fav
 > Augur AI talks to Chrome's built-in Gemini Nano via the on-device Prompt API — prompts and responses never leave the browser. The model itself is downloaded once by Chrome (not by Augur) the first time you use the assistant, and lives in Chrome's own storage afterwards. · Augur AI 通过浏览器的本地 Prompt API 调用内置 Gemini Nano，对话内容不离开浏览器。模型本体由 Chrome（非 Augur）在你首次使用时下载一次，之后存在 Chrome 自己的存储里。
 
 - **No telemetry, no analytics, no error reporting.** · 无埋点、无遥测、无错误上报。
-- **No cloud sync.** Events, model weights, bandit posteriors, embeddings, stash, workspaces, and pins all live in IndexedDB (`augur` database). · 无云同步，全部在 `augur` IndexedDB 数据库里。
+- **No cloud sync.** Events, model weights, bandit posteriors, embeddings, stash, workspaces, and pins all live in IndexedDB (`augur` database). Dexie schema is **purely additive** — extension updates never drop or migrate destructive data. · 无云同步，全部在 `augur` IndexedDB 数据库里。Dexie schema **纯追加式**——扩展更新永远不会破坏性迁移数据。
 - **No host permissions.** The manifest declares `tabs`, `tabGroups`, `history`, `topSites`, `sessions`, `bookmarks`, `storage`, `alarms`, `idle` — and nothing else. The install dialog is short and reads like a normal productivity extension. · 无 host 权限，安装弹窗短小，看着就是普通生产力扩展。
 - **Wipe at any time.** Settings → Data → Wipe — clears every table, resets onboarding, deletes localStorage prefs. · 随时清除，设置 → 数据 → 清除，重置一切。
+
+### First-install bootstrap from browser history · 首装从浏览器历史种子
+
+On first install, the service worker reads the user's last 30 days of Chrome history (`chrome.history.search` + `chrome.history.getVisits` for the top 200 URLs by visit count) and replays them as `navigate` events into `db.events`, then runs a full `rebuildFromEvents` so domain stats and co-occurrence are populated immediately. The model has a real distribution to learn from on day one instead of waiting days for live tab events to accumulate. The bootstrap is **gated by `chrome.runtime.onInstalled` reason === 'install'** so it never re-runs on extension update. A "Seed from browser history" button in **Settings → Data** lets the user re-run it on demand (deletes prior bootstrap-tagged events first to avoid duplicates). · 首次安装时，service worker 会读取过去 30 天的 Chrome 历史（`chrome.history.search` + 对访问最多的 200 个 URL 调 `chrome.history.getVisits` 拿真实时间分布），把它们当作 `navigate` 事件回放进 `db.events`，然后跑一次 `rebuildFromEvents` 让域名统计和共现表立刻就绪——模型从第一天起就有真实分布可学，不用等几天积累。bootstrap **只在 `chrome.runtime.onInstalled` 的 reason 是 `'install'` 时跑**，扩展更新不会重跑。**设置 → 数据**里的"从浏览器历史导入"按钮可以手动重跑（会先删掉之前 bootstrap 打过 tag 的事件，避免重复）。
+
+### Update preservation · 更新数据保留
+
+- **IndexedDB persists across extension updates** by Chrome contract — Dexie tables (events, feedback, domains, cooccurrence, stash, workspaces, pins, kv) survive untouched. · IndexedDB 在扩展更新时由 Chrome 保证持久化，所有 Dexie 表都不会动。
+- **Dexie schema is append-only.** v1 → v4 has only added new tables; no `.upgrade()` callbacks (because none are needed — additive migrations are automatic). · Dexie schema 纯追加，v1→v4 都只加表，无破坏性迁移。
+- **Stale KV keys cleanup**: When schema bumps require resetting model weights (e.g., feature-count change `model:cleanup:v2` → `v3`), the `onInstalled` handler with `reason === 'update'` deletes the stale keys via `db.kv.bulkDelete` so they don't accumulate as dead bytes. Adding to the cleanup list is safe — `bulkDelete` ignores missing keys. · 字段顺序变化要 bump 模型 KV key 时，`onInstalled` 在 `reason === 'update'` 分支用 `db.kv.bulkDelete` 删除旧 key，不会越积越多。
+- **What does get reset on schema bump:** model weights only (the LR / Adam state). Events, feedback, domain stats, embeddings — all retained. The new model warms back up via incremental updates as new events come in (and immediately if the user clicks "Seed from browser history"). · bump 时只重置模型权重；事件、反馈、域名统计、嵌入都保留。新模型通过增量学习自动热起来——点一下"从浏览器历史导入"会立刻热完。
 
 ---
 

@@ -45,6 +45,7 @@ export type RpcRequest =
   | { kind: 'data.export' }
   | { kind: 'data.wipe' }
   | { kind: 'data.resetModels' }
+  | { kind: 'data.bootstrapHistory'; force?: boolean }
   | { kind: 'model.inspect' }
   | { kind: 'stash.add'; items: StashInput[] }
   | { kind: 'stash.list' }
@@ -75,6 +76,11 @@ export type RpcResponse =
   | { ok: true; kind: 'workspace.save'; data: number }
   | { ok: true; kind: 'insights.today'; data: TodayRecap }
   | { ok: true; kind: 'pins.rerank'; data: PinRerankRow[] }
+  | {
+      ok: true;
+      kind: 'data.bootstrapHistory';
+      data: { events: number; domains: number; skipped: boolean; reason?: string };
+    }
   | { ok: true; kind: 'ack' }
   | { ok: false; error: string };
 

@@ -84,6 +84,20 @@ export async function resetModelsOnly(): Promise<void> {
   await callRpc({ kind: 'data.resetModels' });
 }
 
+export interface HistoryBootstrapResult {
+  events: number;
+  domains: number;
+  skipped: boolean;
+  reason?: string;
+}
+
+export async function seedFromBrowserHistory(
+  opts: { force?: boolean } = {},
+): Promise<HistoryBootstrapResult | null> {
+  const r = await callRpc({ kind: 'data.bootstrapHistory', force: opts.force });
+  return r.ok && r.kind === 'data.bootstrapHistory' ? r.data : null;
+}
+
 export async function fetchModelInspection(): Promise<ModelInspection | null> {
   const r = await callRpc({ kind: 'model.inspect' });
   return r.ok && r.kind === 'model.inspect' ? r.data : null;

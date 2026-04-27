@@ -273,6 +273,11 @@
     "wipe": "Wipe all data",
     "wipeConfirm": "Confirm wipe",
     "cancel": "Cancel",
+    "historyBootstrap": "Seed from browser history",
+    "historyBootstrapTooltip": "Replay the last 30 days of your Chrome history into Augur's event log so the model has a real distribution to learn from. Runs once on first install — click here to re-seed.",
+    "historyBootstrapDone": "Seeded {{events}} events across {{domains}} domains. Re-aggregating model now.",
+    "historyBootstrapSkipped": "History bootstrap skipped (already seeded or no history available).",
+    "historyBootstrapFailed": "Couldn't read browser history. Make sure the extension still has the 'history' permission.",
     "privacyHint": "Wiping clears every event, model weight, bandit posterior, and stash, and resets onboarding."
   },
   "debug": {

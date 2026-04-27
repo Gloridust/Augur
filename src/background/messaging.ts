@@ -12,6 +12,7 @@ import {
   wipeAll,
 } from '../ml/data-ops';
 import { trainEmbeddingBatch } from '../ml/embedding-train';
+import { bootstrapFromHistory } from '../ml/history-bootstrap';
 import { buildInsights, buildTodayRecap } from '../ml/insights';
 import {
   recommendOpen,
@@ -119,6 +120,10 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       case 'data.resetModels': {
         await resetModelsOnly();
         return { ok: true, kind: 'ack' };
+      }
+      case 'data.bootstrapHistory': {
+        const data = await bootstrapFromHistory({ force: req.force === true });
+        return { ok: true, kind: 'data.bootstrapHistory', data };
       }
       case 'model.inspect': {
         const data = await inspectModels();

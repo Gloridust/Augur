@@ -22,8 +22,14 @@ import CloseIcon from '@mui/icons-material/Close';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import HistoryIcon from '@mui/icons-material/History';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
-import { exportAllData, wipeAllData } from '../api/recommendations';
+import {
+  exportAllData,
+  seedFromBrowserHistory,
+  wipeAllData,
+} from '../api/recommendations';
+import { toast } from './Toaster';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
 import { useSmartPinSort } from '../hooks/useSmartPinSort';
@@ -74,6 +80,36 @@ export function SettingsDialog({ open, onClose }: Props) {
       a.download = `chromehomepage-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onSeedHistory = async () => {
+    setBusy(true);
+    try {
+      // force=true so subsequent clicks reseed (deletes prior bootstrap-tagged
+      // events first, so we don't accumulate duplicates).
+      const r = await seedFromBrowserHistory({ force: true });
+      if (r === null) {
+        toast({ message: t('settings.historyBootstrapFailed'), severity: 'error' });
+        return;
+      }
+      if (r.skipped) {
+        toast({
+          message: t('settings.historyBootstrapSkipped'),
+          severity: 'info',
+        });
+        return;
+      }
+      toast({
+        message: t('settings.historyBootstrapDone', {
+          events: r.events,
+          domains: r.domains,
+        }),
+        severity: 'success',
+      });
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -264,6 +300,18 @@ export function SettingsDialog({ open, onClose }: Props) {
               />
             </Box>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Tooltip title={t('settings.historyBootstrapTooltip')}>
+                <span>
+                  <Button
+                    onClick={onSeedHistory}
+                    startIcon={<HistoryIcon />}
+                    disabled={busy}
+                    variant="outlined"
+                  >
+                    {t('settings.historyBootstrap')}
+                  </Button>
+                </span>
+              </Tooltip>
               <Tooltip title={t('settings.exportTooltip')}>
                 <span>
                   <Button

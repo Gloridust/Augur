@@ -11,6 +11,7 @@ import { trainEmbeddingBatch } from '../ml/embedding-train';
 import { trainImplicitOpen } from '../ml/recommend';
 import { buildCleanupFeatures } from '../ml/features';
 import { setLastAggregateAt } from '../ml/persistence';
+import { bootstrapFromHistory } from '../ml/history-bootstrap';
 import { registerMessaging } from './messaging';
 import {
   deleteTabState,
@@ -143,12 +144,36 @@ async function reconcileOpenTabs(): Promise<void> {
   }
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
   chrome.alarms.create('heartbeat', { periodInMinutes: 5 });
   chrome.alarms.create('nightlyDecay', { periodInMinutes: 60 * 6 });
   chrome.alarms.create('embeddingRetrain', { periodInMinutes: 60 * 12 });
   await reconcileOpenTabs();
+
+  if (details.reason === 'install') {
+    // First install — seed db.events from the user's existing browser
+    // history so the model has a real distribution to learn from on day
+    // one (instead of waiting days for live tab events to accumulate).
+    // Async + non-blocking: extension is usable immediately; aggregates
+    // populate as the bootstrap finishes in the background.
+    void bootstrapFromHistory().then((r) => {
+      if (!r.skipped) {
+        console.log(
+          `[augur] history bootstrap: ${r.events} events across ${r.domains} domains`,
+        );
+      }
+    });
+  } else if (details.reason === 'update') {
+    // Clean up KV keys orphaned by past schema bumps. Adding to this list
+    // is safe — bulkDelete silently ignores keys that don't exist.
+    const STALE_KEYS = ['model:cleanup:v2', 'model:recommend:v2'];
+    try {
+      await db.kv.bulkDelete(STALE_KEYS);
+    } catch {
+      // ignore — kv table may not be ready yet on first SW boot
+    }
+  }
 });
 
 chrome.runtime.onStartup.addListener(async () => {
