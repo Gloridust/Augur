@@ -23,9 +23,13 @@ import DownloadIcon from '@mui/icons-material/Download';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import HistoryIcon from '@mui/icons-material/History';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import LuggageIcon from '@mui/icons-material/Luggage';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import {
   exportAllData,
+  exportDebugBundle,
+  exportUserMigration,
   seedFromBrowserHistory,
   wipeAllData,
 } from '../api/recommendations';
@@ -33,6 +37,7 @@ import { toast } from './Toaster';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
 import { useSmartPinSort } from '../hooks/useSmartPinSort';
+import { useGeminiHelpersPref } from '../hooks/useGeminiHelpers';
 import { ModelDebugPanel } from './ModelDebugPanel';
 import { SetAsHomepageGuide } from './SetAsHomepageGuide';
 
@@ -59,6 +64,11 @@ export function SettingsDialog({ open, onClose }: Props) {
   const [userName, setStoredUserName] = useUserNameField();
   const [userNameDraft, setUserNameDraft] = useState(userName);
   const [smartPinSort, setSmartPinSort] = useSmartPinSort();
+  const {
+    enabled: geminiEnabled,
+    setEnabled: setGeminiEnabled,
+    apiAvailable: geminiApiAvailable,
+  } = useGeminiHelpersPref();
 
   // Re-seed the draft when the dialog opens so it stays consistent with the
   // current saved value (e.g. after a wipe-all that resets the name too).
@@ -78,6 +88,57 @@ export function SettingsDialog({ open, onClose }: Props) {
       const a = document.createElement('a');
       a.href = url;
       a.download = `chromehomepage-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onExportDebug = async () => {
+    setBusy(true);
+    try {
+      const bundle = await exportDebugBundle();
+      if (!bundle) {
+        toast({ message: t('settings.debugExportFailed'), severity: 'error' });
+        return;
+      }
+      // Decode base64 → Blob → download. The SW built the zip; we just
+      // hand the bytes to the browser.
+      const bin = atob(bundle.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = bundle.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({
+        message: t('settings.debugExportDone', {
+          size: (bundle.size / 1024).toFixed(0),
+        }),
+        severity: 'success',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onExportMigration = async () => {
+    setBusy(true);
+    try {
+      const dump = await exportUserMigration();
+      if (!dump) {
+        toast({ message: t('settings.migrationExportFailed'), severity: 'error' });
+        return;
+      }
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `augur-migration-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {
@@ -265,6 +326,35 @@ export function SettingsDialog({ open, onClose }: Props) {
                 />
               </Box>
             </Stack>
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {t('settings.geminiTitle')}
+              </Typography>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography variant="body2">
+                    {t('settings.geminiHelpers')}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {geminiApiAvailable
+                      ? t('settings.geminiHelpersHint')
+                      : t('settings.geminiHelpersUnavailable')}
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={geminiEnabled && geminiApiAvailable}
+                  disabled={!geminiApiAvailable}
+                  onChange={(_, v) => setGeminiEnabled(v)}
+                />
+              </Box>
+            </Stack>
           </Stack>
         )}
 
@@ -321,6 +411,30 @@ export function SettingsDialog({ open, onClose }: Props) {
                     variant="outlined"
                   >
                     {t('settings.export')}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title={t('settings.debugExportTooltip')}>
+                <span>
+                  <Button
+                    onClick={onExportDebug}
+                    startIcon={<BugReportIcon />}
+                    disabled={busy}
+                    variant="outlined"
+                  >
+                    {t('settings.debugExport')}
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title={t('settings.migrationExportTooltip')}>
+                <span>
+                  <Button
+                    onClick={onExportMigration}
+                    startIcon={<LuggageIcon />}
+                    disabled={busy}
+                    variant="outlined"
+                  >
+                    {t('settings.migrationExport')}
                   </Button>
                 </span>
               </Tooltip>

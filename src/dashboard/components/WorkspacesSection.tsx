@@ -23,6 +23,12 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import OpenInBrowserIcon from '@mui/icons-material/OpenInBrowser';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SaveIcon from '@mui/icons-material/Save';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import {
+  suggestWorkspaceName,
+  useGeminiHelpersPref,
+} from '../hooks/useGeminiHelpers';
+import { extractDomain } from '../../shared/db';
 import type { Workspace, WorkspaceTab } from '../../shared/types';
 import {
   deleteWorkspaceById,
@@ -78,10 +84,27 @@ function SaveDialog({ open, onClose, defaultName, tabs, onSaved }: SaveDialogPro
   const { t } = useTranslation();
   const [name, setName] = useState(defaultName);
   const [busy, setBusy] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const { enabled: geminiEnabled, apiAvailable } = useGeminiHelpersPref();
+  const showSuggestButton = geminiEnabled && apiAvailable;
 
   useEffect(() => {
     if (open) setName(defaultName);
   }, [open, defaultName]);
+
+  const onSuggest = async () => {
+    if (suggesting || tabs.length === 0) return;
+    setSuggesting(true);
+    try {
+      const domains = Array.from(
+        new Set(tabs.map((tb) => extractDomain(tb.url)).filter(Boolean)),
+      );
+      const suggested = await suggestWorkspaceName(domains);
+      if (suggested) setName(suggested);
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const onSave = async () => {
     if (!name.trim() || tabs.length === 0) return;
@@ -104,19 +127,37 @@ function SaveDialog({ open, onClose, defaultName, tabs, onSaved }: SaveDialogPro
       <DialogTitle>{t('workspaces.saveTitle')}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField
-            autoFocus
-            fullWidth
-            label={t('workspaces.nameLabel')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void onSave();
-              }
-            }}
-          />
+          <Stack direction="row" spacing={1} alignItems="flex-end">
+            <TextField
+              autoFocus
+              fullWidth
+              label={t('workspaces.nameLabel')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void onSave();
+                }
+              }}
+            />
+            {showSuggestButton && (
+              <Tooltip title={t('workspaces.suggestNameTooltip')}>
+                <span>
+                  <IconButton
+                    onClick={onSuggest}
+                    disabled={suggesting || tabs.length === 0}
+                    sx={{
+                      color: 'primary.main',
+                      mb: 0.5,
+                    }}
+                  >
+                    <AutoAwesomeIcon />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
+          </Stack>
           <Typography variant="caption" color="text.secondary">
             {t('workspaces.captureCount', { count: tabs.length })}
           </Typography>

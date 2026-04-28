@@ -2,6 +2,7 @@ import { db, extractDomain } from '../shared/db';
 import type { CleanupCandidate, CleanupFeatures } from '../shared/types';
 import { getIdleState, getStateMap } from '../background/state';
 import { getDomainStats } from './aggregate';
+import { clusterByEmbedding, type ClusterMember } from './cluster';
 import { getEmbedding } from './embedding-train';
 import {
   buildCleanupFeatures,
@@ -100,6 +101,10 @@ export async function scoreCleanupCandidates(
   // Hardcoded dashboard URL pattern — we can compute it via chrome.runtime
   // here too, but a string check works in the SW context without touching
   // chrome.runtime.getURL (which can be undefined in some test paths).
+  // MUST be declared before the cluster code below references it — `const`
+  // bindings are in their TDZ until the line they're declared on, so any
+  // earlier reference (like the embedding-cluster filter that uses it)
+  // throws "Cannot access 'dashboardUrlMatch' before initialization".
   const dashboardUrlMatch = (url: string | undefined): boolean => {
     if (!url) return false;
     if (url === 'chrome://newtab/' || url === 'chrome://new-tab-page/') return true;
@@ -109,6 +114,67 @@ export async function scoreCleanupCandidates(
     }
     return false;
   };
+
+  // ── Embedding-cluster task-state ───────────────────────────────────
+  // Cluster open tabs by skip-gram cosine similarity. The "active cluster"
+  // is the one whose members have the most recent aggregate focus — tabs
+  // in that cluster share task semantics with what the user's currently
+  // engaged with, so the cleanup head should leave them alone. Tabs in
+  // STALE clusters (no recent focus across the whole cluster) are stronger
+  // cleanup candidates than their per-tab stats alone would suggest.
+  const clusterableTabs = tabs.filter(
+    (t) =>
+      t.id !== undefined &&
+      !t.pinned &&
+      !t.audible &&
+      !dashboardUrlMatch(t.url) &&
+      extractDomain(t.url) &&
+      embedding.has(extractDomain(t.url)),
+  );
+  const clusterMembers: ClusterMember<{ tabId: number; lastFocusMs: number }>[] =
+    clusterableTabs.map((t) => {
+      const st = stateMap[t.id!];
+      // "Last focus" = focusedAt if currently focused, else
+      // openedAt + focusMs (rough proxy for "recently engaged").
+      const lastFocusMs = st?.focusedAt ?? (st ? st.openedAt + st.focusMs : 0);
+      return {
+        domain: extractDomain(t.url),
+        payload: { tabId: t.id!, lastFocusMs },
+      };
+    });
+  const clusters = clusterByEmbedding(clusterMembers, embedding, 0.35);
+
+  // Pick the active cluster: highest max(lastFocusMs) across its members.
+  let activeClusterIdx = -1;
+  let activeClusterFocus = -1;
+  for (let i = 0; i < clusters.length; i++) {
+    let maxFocus = 0;
+    for (const m of clusters[i].members) {
+      if (m.payload.lastFocusMs > maxFocus) maxFocus = m.payload.lastFocusMs;
+    }
+    if (maxFocus > activeClusterFocus) {
+      activeClusterFocus = maxFocus;
+      activeClusterIdx = i;
+    }
+  }
+  // Compute per-cluster staleness = (now - maxFocusInCluster) / 24h, clamped 0..1
+  const STALENESS_HORIZON = 24 * 60 * 60 * 1000;
+  const clusterStaleness: number[] = clusters.map((c) => {
+    let maxF = 0;
+    for (const m of c.members) {
+      if (m.payload.lastFocusMs > maxF) maxF = m.payload.lastFocusMs;
+    }
+    if (maxF === 0) return 1;
+    const dt = now - maxF;
+    return Math.max(0, Math.min(1, dt / STALENESS_HORIZON));
+  });
+  // Reverse index: tabId → cluster idx
+  const tabToCluster = new Map<number, number>();
+  for (let i = 0; i < clusters.length; i++) {
+    for (const m of clusters[i].members) {
+      tabToCluster.set(m.payload.tabId, i);
+    }
+  }
 
   const candidates: CleanupCandidate[] = [];
   for (const tab of tabs) {
@@ -128,6 +194,10 @@ export async function scoreCleanupCandidates(
     const otherOpens = Array.from(engagedOpenDomains).filter((d) => d !== domain);
     const embedSim = embedding.meanCosine(domain, otherOpens);
     const winId = tab.windowId;
+    const myClusterIdx = tabToCluster.get(tab.id) ?? -1;
+    const inActive = myClusterIdx >= 0 && myClusterIdx === activeClusterIdx;
+    const staleness =
+      myClusterIdx >= 0 ? clusterStaleness[myClusterIdx] : 0;
     const features = buildCleanupFeatures({
       tab,
       state,
@@ -141,6 +211,8 @@ export async function scoreCleanupCandidates(
       activeWindowId,
       groupTitleById,
       idleState,
+      inActiveCluster: inActive,
+      clusterStaleness: staleness,
     });
     const baseScore = model.predict(vectorFromCleanup(features));
     const reason = summarizeCleanupReason(features);

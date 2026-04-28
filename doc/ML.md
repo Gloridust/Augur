@@ -210,7 +210,106 @@ All three are calibrated probabilities — meaningful in absolute terms, not jus
 
 Gated by `chrome.runtime.onInstalled.reason === 'install'` so it never re-runs on update. Re-seedable via Settings → Data → "Seed from browser history" (deletes prior bootstrap-tagged events first to avoid duplicates).
 
-## 10. What's NOT done
+## 10. Three-timescale sequence memory (LSTM-inspired)
+
+The recommend head's biggest historical weakness was **no sequence context**: each candidate was scored independently, so the model couldn't say "user just toggled between Slack and Linear three times — predict one of those next" or "Monday 9am they always open Gmail." Two failure modes:
+
+- **Short-term**: rapid back-and-forth in a hot session — the user's micro-workflow.
+- **Long-term**: stable workflow patterns AND daily-rhythm habits.
+
+[`DomainSequenceMemory`](../src/ml/models/markov.ts) addresses both with three count-based predictors at three timescales — analogous to an LSTM's separation of short-term cell state and long-term cell state, but in a tractable form for ~1000–10000 events per user:
+
+| Predictor | What it captures | Decay | Conditioned on |
+|---|---|---|---|
+| `seqProbShort` | Recent micro-session toggles | exp(−Δt / 30 min), 6 h cutoff | `last_focused_domain` |
+| `seqProbLong` | Stable workflow patterns | none — counts accumulate forever | `(last₂, last₁)` (trigram) backing off to `last₁` (bigram) with embedding-smoothed unseen pairs |
+| `seqProbTime` | Daily rhythm habits | none | `(hour_of_day, last_focused_domain)` |
+
+All three update on the same `observe(history, next, ts, hour)` call. The LR head sees three separate features (`seqProbShort` / `seqProbLong` / `seqProbTime`) and learns the per-user mixture — chaotic users get high weight on `seqProbShort`, routinized users on `seqProbLong` / `seqProbTime`.
+
+### Why not a transformer
+
+At single-user data scale (~1000–10000 events), a multi-layer transformer would overfit massively and cold-start for weeks. The transformer's key intuition — *attention over similar contexts* — is preserved here via the embedding-smoothed long-term backoff: when the model has never seen `(slack → linear)` directly, it borrows mass from `(slack → jira)` and `(slack → asana)` weighted by skip-gram cosine similarity to `linear`. Same effect (similar contexts get similar predictions), at O(1) updates and zero cold-start.
+
+If the user base eventually generates enough cross-user data to make a real transformer trainable, that's a future migration. Not today's data scale.
+
+### Candidate-pool augmentation
+
+Sequence memory also fixes a deeper bug: the recommend pool was previously **pure frecency** (`getTopDomainsByFrecency(80)`). If the right next-domain wasn't in the user's overall top-80, the scorer never even saw it. Now `recommendOpen` calls `seq.topPredictions(focusHistory, hour, now, 20)` and merges those into the pool — so contextually-likely domains get scored even if their global frecency is mid-tier.
+
+### `trainImplicitOpen` context fix
+
+The pre-fix implementation passed `focusedDomain: undefined, openDomains: []` to every implicit-positive training call, meaning `embedSimToFocused`, `isCurrentlyOpen`, and (now) `seqProb*` were all 0 at training time. The model was effectively learning the marginal feature distribution of opens, not the conditional "given context X, opening Y is good" — predictions collapsed to the prior rate.
+
+The fix: SW passes the real focus history, focused domain, and open domains. Training now also samples 5 random non-opened domains from the frecency pool as **negatives** (label=0, weight=0.2). Without explicit negatives, the LR can only learn "this is positive" and scores converge uselessly to the prior; with them, it learns to discriminate.
+
+## 11. Embedding-cluster task state (cleanup head)
+
+The cleanup head used to score each open tab independently, which couldn't capture "user is currently in dev mode, so the leisure tabs are stale regardless of their per-tab stats." Two new features address that:
+
+- `inActiveCluster` ∈ {0, 1} — tab shares a cluster with the user's most recently focused tab.
+- `clusterStaleness` ∈ [0, 1] — `(now - max_focus_in_cluster) / 24h`, clamped.
+
+Clustering happens on the fly in [`scoreCleanupCandidates`](../src/ml/cleanup.ts) via [`clusterByEmbedding`](../src/ml/cluster.ts) — average-linkage agglomerative clustering on skip-gram cosine similarity, threshold 0.35. With 5–25 open tabs the O(n³) cost is sub-millisecond. Tabs whose domains aren't in the embedding vocab fall through with `inActiveCluster = 0` and `clusterStaleness = 0` (no signal).
+
+The "active cluster" is the one whose members have the maximum `lastFocusMs` across the cluster. Per-tab `lastFocusMs` is `focusedAt` if currently focused, else `openedAt + focusMs` as a rough proxy.
+
+## 12. Random Forest as nightly batch ensemble
+
+The OnlineLogReg recommend head is linear after standardization — it can't learn "high `freqDecay` AND low `recencyHours` AND `seqProbLong > 0.3` → likely positive" as a single tree path. A 30-tree Random Forest captures these non-linear feature interactions natively.
+
+[`RandomForest`](../src/ml/models/randomforest.ts) is a CART ensemble with bagging + per-split feature subsampling (sqrt of feature count). Trees: max depth 6, min samples per leaf 4, entropy splits. Trained offline by [`rf-train.ts`](../src/ml/rf-train.ts) on a `forestRetrain` alarm every 8 h.
+
+### Training data construction
+
+Walk `db.events` (last 30 days, capped at 1500 events). For each `'open'` / `'navigate'` event:
+1. Maintain a rolling `focusHistory` from the focus events seen in chronological order.
+2. The opened domain → positive sample (label = 1) with features computed from current state at that ts.
+3. Sample 3 random domains from the frecency pool that were NOT just opened → negative samples (label = 0).
+4. `RandomForest.fit(X, y)` → persist to KV `model:recommend:forest:v1`.
+
+If there aren't enough events for stable training (< 20 samples), the trainer skips the save rather than overwrite a previously-good forest with noise.
+
+### Inference
+
+In [`recommendOpen`](../src/ml/recommend.ts), each candidate's feature vector is scored by both the LR head and the forest:
+
+```
+baseScore = forestReady
+  ? 0.5 * lrScore + 0.5 * forest.predict(x)
+  : lrScore   // fallback if forest hasn't been trained yet
+```
+
+Equal weight for now. Could be learned per-user later by a calibration pass that weights each model by its empirical accuracy on held-out events.
+
+The forest cache is invalidated after a successful retrain (via `invalidateForestCache()`) so the next inference picks up the new weights without an SW restart.
+
+## 13. Gemini Nano helpers (strictly opt-in, never for ranking)
+
+A small subset of UI surfaces use Chrome's built-in Gemini Nano for **content generation** — never for ranking, scoring, or candidate selection. Currently:
+
+- **Workspace naming**: when the user clicks "Save current as workspace", a wand button next to the name input calls `suggestWorkspaceName(domains)` to propose a 2–4 word workspace name.
+
+These calls go through [`useGeminiHelpers`](../src/dashboard/hooks/useGeminiHelpers.ts) which gates on:
+1. **User opt-in** — `localStorage['augur:useGeminiHelpers']` defaults to `'false'`. Toggle in Settings → General → "On-device AI helpers". Off until explicitly enabled.
+2. **API availability** — `window.LanguageModel` exists AND `availability()` returns `'available'` or `'downloadable'`. Falls through silently otherwise.
+3. **Per-call timeout** — 8s `AbortController`. If the model's slow or hangs, the helper returns `null` and the caller uses its deterministic fallback.
+
+### Why this is gated
+
+- Non-Chrome browsers don't have the Prompt API → falls back automatically.
+- Mainland China users may not be able to download the Gemini Nano weights → falls back automatically.
+- Privacy-conscious users who don't want to invoke an LLM at all → can leave it off, lose nothing functional.
+
+**The ranking pipeline (LR + RF + bandit + sequence memory + clustering) is 100% deterministic, on-device, and unaffected by the Gemini toggle.** Predictions never depend on Gemini being available.
+
+### Why not use Gemini for ranking
+
+- Inference latency (~100–500ms per call) × 80 candidates = unusable for real-time recommendation.
+- LLM logits are not calibrated probabilities.
+- Gemini was trained on the public web, not your specific browsing patterns. Personalization is exactly what it can't provide.
+
+## 14. What's NOT done
 
 Conscious choices to keep the model surface manageable:
 

@@ -14,11 +14,19 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ModelTrainingIcon from '@mui/icons-material/ModelTraining';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import ForestIcon from '@mui/icons-material/Forest';
+import TimelineIcon from '@mui/icons-material/Timeline';
+import ReplayIcon from '@mui/icons-material/Replay';
+import HubIcon from '@mui/icons-material/Hub';
 import type { ModelInspection } from '../../ml/data-ops';
 import {
   fetchModelInspection,
+  rebuildAggregates,
+  rebuildSequenceMemory,
+  replayImplicitTraining,
   resetModelsOnly,
   retrainEmbedding,
+  retrainForest,
 } from '../api/recommendations';
 import { toast } from './Toaster';
 
@@ -260,6 +268,75 @@ export function ModelDebugPanel() {
     }
   };
 
+  const onRetrainForest = async () => {
+    setBusy(true);
+    try {
+      const r = await retrainForest();
+      await refresh();
+      if (r) {
+        toast({
+          message: t('toasts.forestRetrained', {
+            samples: r.trained,
+            pos: r.posSamples,
+            neg: r.negSamples,
+          }),
+          severity: r.trained > 0 ? 'success' : 'info',
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRebuildSequence = async () => {
+    setBusy(true);
+    try {
+      const r = await rebuildSequenceMemory();
+      await refresh();
+      if (r) {
+        toast({
+          message: t('toasts.sequenceRebuilt', {
+            observed: r.observed,
+            keys: r.bigramKeys,
+          }),
+          severity: 'success',
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onReplayLR = async () => {
+    setBusy(true);
+    try {
+      const r = await replayImplicitTraining();
+      await refresh();
+      if (r) {
+        toast({
+          message: t('toasts.lrReplayed', {
+            open: r.openSamples,
+            cleanup: r.cleanupSamples,
+          }),
+          severity: 'success',
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRebuildAggregates = async () => {
+    setBusy(true);
+    try {
+      await rebuildAggregates();
+      await refresh();
+      toast({ message: t('toasts.aggregatesRebuilt'), severity: 'success' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onResetModels = async () => {
     setBusy(true);
     try {
@@ -354,6 +431,69 @@ export function ModelDebugPanel() {
         calibSamples={data.recommend.calibSamples}
         calibLabel={t('debug.calibration')}
       />
+
+      <Box>
+        <Typography variant="subtitle1" sx={{ fontWeight: 500, mb: 1 }}>
+          {t('debug.manualTraining')}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+          {t('debug.manualTrainingHint')}
+        </Typography>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Tooltip title={t('debug.retrainForestTooltip')}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<ForestIcon />}
+                onClick={onRetrainForest}
+                disabled={busy}
+              >
+                {t('debug.retrainForest')}
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip title={t('debug.rebuildSequenceTooltip')}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<TimelineIcon />}
+                onClick={onRebuildSequence}
+                disabled={busy}
+              >
+                {t('debug.rebuildSequence')}
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip title={t('debug.replayLRTooltip')}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<ReplayIcon />}
+                onClick={onReplayLR}
+                disabled={busy}
+              >
+                {t('debug.replayLR')}
+              </Button>
+            </span>
+          </Tooltip>
+          <Tooltip title={t('debug.rebuildAggregatesTooltip')}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<HubIcon />}
+                onClick={onRebuildAggregates}
+                disabled={busy}
+              >
+                {t('debug.rebuildAggregates')}
+              </Button>
+            </span>
+          </Tooltip>
+        </Stack>
+      </Box>
 
       <Box>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>

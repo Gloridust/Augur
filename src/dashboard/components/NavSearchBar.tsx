@@ -27,6 +27,7 @@ import {
 } from '../hooks/useSearchEngine';
 import { useRecentSearches } from '../hooks/useRecentSearches';
 import { useSearchSuggestions } from '../hooks/useSearchSuggestions';
+import { logUiEvent } from '../api/recommendations';
 import { EngineGlyph } from './EngineGlyph';
 
 interface DropdownItem {
@@ -86,6 +87,11 @@ export function NavSearchBar() {
     const q = raw.trim();
     if (!q) return;
     addRecent(q);
+    logUiEvent({
+      type: 'search_executed',
+      query: q,
+      meta: { engine, openInNewTab },
+    });
     const url = searchUrlFor(engine, q);
     if (openInNewTab) {
       window.open(url, '_blank');

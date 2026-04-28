@@ -5,6 +5,7 @@ import type {
   OpenCandidate,
   RecommendFeatures,
   StashedTab,
+  TabEvent,
   TodayRecap,
   Workspace,
   WorkspaceTab,
@@ -98,6 +99,41 @@ export async function seedFromBrowserHistory(
   return r.ok && r.kind === 'data.bootstrapHistory' ? r.data : null;
 }
 
+// Trigger the SW to build a debug zip bundle and return its bytes
+// (base64-encoded since chrome.runtime messages must be JSON-serializable).
+// Caller decodes and triggers a browser download.
+export interface DebugBundleData {
+  filename: string;
+  base64: string;
+  size: number;
+}
+export async function exportDebugBundle(): Promise<DebugBundleData | null> {
+  const r = await callRpc({ kind: 'data.exportDebugBundle' });
+  return r.ok && r.kind === 'data.exportDebugBundle' ? r.data : null;
+}
+
+export interface UserMigrationData {
+  augurUserMigration: 1;
+  exportedAt: number;
+  workspaces: unknown[];
+  pins: unknown[];
+  stash: unknown[];
+}
+export async function exportUserMigration(): Promise<UserMigrationData | null> {
+  const r = await callRpc({ kind: 'data.exportUserMigration' });
+  return r.ok && r.kind === 'data.exportUserMigration' ? r.data : null;
+}
+
+// Log a product-surface event from the dashboard. Used for telemetry the
+// SW can't see directly (OracleHint accept/dismiss, smart-cleanup commit,
+// search executed, etc). Fire-and-forget — failures don't break the
+// originating action.
+export function logUiEvent(
+  partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek' | 'id'>,
+): void {
+  void callRpc({ kind: 'event.log', partial }).catch(() => undefined);
+}
+
 export async function fetchModelInspection(): Promise<ModelInspection | null> {
   const r = await callRpc({ kind: 'model.inspect' });
   return r.ok && r.kind === 'model.inspect' ? r.data : null;
@@ -106,6 +142,31 @@ export async function fetchModelInspection(): Promise<ModelInspection | null> {
 export async function retrainEmbedding(): Promise<{ steps: number; vocab: number } | null> {
   const r = await callRpc({ kind: 'embedding.retrain' });
   return r.ok && r.kind === 'embedding.retrain' ? r.data : null;
+}
+
+export async function retrainForest(): Promise<{
+  trained: number;
+  posSamples: number;
+  negSamples: number;
+} | null> {
+  const r = await callRpc({ kind: 'forest.retrain' });
+  return r.ok && r.kind === 'forest.retrain' ? r.data : null;
+}
+
+export async function rebuildSequenceMemory(): Promise<{
+  observed: number;
+  bigramKeys: number;
+} | null> {
+  const r = await callRpc({ kind: 'sequence.rebuild' });
+  return r.ok && r.kind === 'sequence.rebuild' ? r.data : null;
+}
+
+export async function replayImplicitTraining(): Promise<{
+  openSamples: number;
+  cleanupSamples: number;
+} | null> {
+  const r = await callRpc({ kind: 'lr.replay' });
+  return r.ok && r.kind === 'lr.replay' ? r.data : null;
 }
 
 export async function stashItems(items: StashInput[]): Promise<number[]> {

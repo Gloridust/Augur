@@ -6,6 +6,12 @@ export default defineManifest({
   description: '__MSG_extDescription__',
   version: '0.1.0',
   default_locale: 'en',
+  // key: '<paste the output of `npm run extension-key`>',
+  // Without `key`, Chrome derives the extension ID from the install path,
+  // so reloading from a different directory creates a NEW extension ID
+  // with a fresh IndexedDB. Setting `key` to a stable RSA-2048 public key
+  // pins the ID across rebuilds. Run `npm run extension-key` to generate
+  // one. The Chrome Web Store ignores this field on publish.
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',

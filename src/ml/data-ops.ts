@@ -9,6 +9,7 @@ import {
   loadCleanupModel,
   loadRecommendModel,
 } from './persistence';
+import { bytesToBase64, writeZip } from './zip-writer';
 
 export interface DataDump {
   schemaVersion: 3;
@@ -42,6 +43,144 @@ export async function exportAll(): Promise<DataDump> {
     stash,
     workspaces,
     kv,
+  };
+}
+
+// Debug bundle for ML / model post-hoc analysis. Splits each table into its
+// own JSON file inside a ZIP, plus a SCHEMA.md with field documentation
+// and a MANIFEST.json with versions / counts / timestamps. The split-file
+// layout means analysts can `import pandas as pd; pd.read_json('events.json')`
+// and similar without parsing a 50MB monolithic dump.
+export interface DebugBundleResult {
+  filename: string;
+  base64: string;
+  size: number;
+}
+
+export async function exportDebugBundle(): Promise<DebugBundleResult> {
+  const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv] =
+    await Promise.all([
+      db.events.toArray(),
+      db.feedback.toArray(),
+      db.domains.toArray(),
+      db.cooccurrence.toArray(),
+      db.stash.toArray(),
+      db.workspaces.toArray(),
+      db.pins.toArray(),
+      db.kv.toArray(),
+    ]);
+
+  const exportedAt = Date.now();
+  const manifest = {
+    augurDebugBundle: 1,
+    exportedAt,
+    exportedAtIso: new Date(exportedAt).toISOString(),
+    counts: {
+      events: events.length,
+      feedback: feedback.length,
+      domains: domains.length,
+      cooccurrence: cooccurrence.length,
+      stash: stash.length,
+      workspaces: workspaces.length,
+      pins: pins.length,
+      kvEntries: kv.length,
+    },
+    featureNames: {
+      cleanup: CLEANUP_FEATURE_NAMES,
+      recommend: RECOMMEND_FEATURE_NAMES,
+    },
+  };
+
+  const schema = `# Augur debug bundle
+
+This zip contains a snapshot of one user's local Augur state at the time of
+export. Intended for **model post-hoc analysis** — what the recommend /
+cleanup heads predicted, what the user did, where the model was wrong.
+
+## Files
+
+| File | Contents |
+|---|---|
+| MANIFEST.json | Export metadata + counts + feature name arrays |
+| events.json | Raw \`db.events\` — every observed tab/window/group event |
+| feedback.json | Raw \`db.feedback\` — explicit user accept/dismiss actions |
+| domains.json | Aggregated per-domain stats (visit counts, hour/dow histograms, etc.) |
+| cooccurrence.json | Domain pair co-occurrence counts |
+| stash.json | Currently-stashed tabs |
+| workspaces.json | Saved workspaces |
+| pins.json | Pinned shortcuts |
+| kv.json | Model weights, bandit posteriors, embeddings, sequence memory, forest. \
+Keys: \`model:cleanup:vN\`, \`model:recommend:vN\`, \`model:recommend:forest:v1\`, \
+\`bandit:cleanup:v1\`, \`bandit:recommend:v1\`, \`embedding:v1\`, \`sequenceMemory:v1\` |
+
+## Privacy
+
+This bundle includes the user's full browsing event history and trained
+model weights. Treat it like raw browsing data. The user explicitly
+clicked "Export debug bundle" — they're consenting to share this with
+whoever they hand the file to (typically an Augur developer for review).
+
+## Reproducing predictions
+
+The KV entries contain serialized weights you can reload via the
+\`OnlineLogReg.load()\`, \`BetaBandit\`, \`SkipGramEmbedding\`, \`RandomForest\`
+constructors. Combined with \`feature_names\` in MANIFEST you can replay
+\`recommendOpen\` / \`scoreCleanupCandidates\` offline to debug specific
+predictions.
+`;
+
+  const stamp = new Date(exportedAt).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const enc = (obj: unknown): Uint8Array =>
+    new TextEncoder().encode(JSON.stringify(obj, null, 2));
+
+  const zipBytes = writeZip([
+    { name: 'MANIFEST.json', data: enc(manifest) },
+    { name: 'SCHEMA.md', data: new TextEncoder().encode(schema) },
+    { name: 'events.json', data: enc(events) },
+    { name: 'feedback.json', data: enc(feedback) },
+    { name: 'domains.json', data: enc(domains) },
+    { name: 'cooccurrence.json', data: enc(cooccurrence) },
+    { name: 'stash.json', data: enc(stash) },
+    { name: 'workspaces.json', data: enc(workspaces) },
+    { name: 'pins.json', data: enc(pins) },
+    { name: 'kv.json', data: enc(kv) },
+  ]);
+
+  return {
+    filename: `augur-debug-${stamp}.zip`,
+    base64: bytesToBase64(zipBytes),
+    size: zipBytes.length,
+  };
+}
+
+// User migration export — what someone moving Augur from device A to
+// device B actually wants: their saved workspaces, pins, stash items,
+// and minimal preferences. Deliberately EXCLUDES events, model weights,
+// embeddings, etc — those are device-specific behavioral fingerprints
+// and should retrain naturally on the new device's history bootstrap.
+//
+// Shape is a single self-contained JSON for easy human inspection +
+// future programmatic import.
+export interface UserMigrationDump {
+  augurUserMigration: 1;
+  exportedAt: number;
+  workspaces: unknown[];
+  pins: unknown[];
+  stash: unknown[];
+}
+
+export async function exportUserMigration(): Promise<UserMigrationDump> {
+  const [workspaces, pins, stash] = await Promise.all([
+    db.workspaces.toArray(),
+    db.pins.toArray(),
+    db.stash.toArray(),
+  ]);
+  return {
+    augurUserMigration: 1,
+    exportedAt: Date.now(),
+    workspaces,
+    pins,
+    stash,
   };
 }
 

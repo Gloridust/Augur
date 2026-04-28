@@ -8,9 +8,17 @@ import {
 } from '../ml/aggregate';
 import { trainImplicitCleanup } from '../ml/cleanup';
 import { trainEmbeddingBatch } from '../ml/embedding-train';
-import { trainImplicitOpen } from '../ml/recommend';
+import {
+  getSequenceMemory,
+  invalidateForestCache,
+  trainImplicitOpen,
+} from '../ml/recommend';
+import { trainRecommendForest } from '../ml/rf-train';
 import { buildCleanupFeatures } from '../ml/features';
-import { setLastAggregateAt } from '../ml/persistence';
+import {
+  saveSequenceMemory,
+  setLastAggregateAt,
+} from '../ml/persistence';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
 import { registerMessaging } from './messaging';
 import {
@@ -26,10 +34,69 @@ import {
 
 const IDLE_DETECTION_SECONDS = 60;
 
+// Rolling buffer of the last K focused domains, oldest → newest. Stored
+// in chrome.storage.session so it survives across SW sleep cycles within
+// a browser session. Used by:
+//   - DomainSequenceMemory: trained on each focus transition (history → next)
+//   - recommendOpen: passed as `focusHistory` so the three sequence-memory
+//     predictors (short / long / time) can score candidates with context
+//   - trainImplicitOpen: ditto, but for online training on each open event
+const FOCUS_HISTORY_KEY = 'augur:focusHistory';
+const FOCUS_HISTORY_MAX = 8;
+
+async function getFocusHistory(): Promise<string[]> {
+  const out = await chrome.storage.session.get(FOCUS_HISTORY_KEY);
+  const v = out[FOCUS_HISTORY_KEY];
+  return Array.isArray(v) ? (v as string[]) : [];
+}
+
+async function pushFocusHistory(domain: string): Promise<string[]> {
+  if (!domain) return getFocusHistory();
+  let seq = await getFocusHistory();
+  // Dedupe consecutive identical focuses — toggling away and back to
+  // the same tab shouldn't fill the buffer with one repeated domain.
+  if (seq.length > 0 && seq[seq.length - 1] === domain) return seq;
+  seq = [...seq, domain];
+  if (seq.length > FOCUS_HISTORY_MAX) seq = seq.slice(-FOCUS_HISTORY_MAX);
+  await chrome.storage.session.set({ [FOCUS_HISTORY_KEY]: seq });
+  return seq;
+}
+
+// Train the sequence memory on a (history → next) transition. The history
+// is the buffer state BEFORE the new domain was pushed.
+async function observeSequenceTransition(
+  prevHistory: string[],
+  next: string,
+  ts: number,
+): Promise<void> {
+  if (!next) return;
+  if (prevHistory.length === 0) return;
+  const seq = await getSequenceMemory();
+  const hour = new Date(ts).getHours();
+  seq.observe(prevHistory, next, ts, hour);
+  await saveSequenceMemory(seq);
+}
+
 function nowParts(): { ts: number; hourOfDay: number; dayOfWeek: number } {
   const ts = Date.now();
   const d = new Date(ts);
   return { ts, hourOfDay: d.getHours(), dayOfWeek: d.getDay() };
+}
+
+async function buildOpenContext(): Promise<{
+  focusHistory: string[];
+  focusedDomain?: string;
+  openDomains: string[];
+}> {
+  const focusHistory = await getFocusHistory();
+  const focusedTabId = await getFocusedTabId();
+  const stateMap = await getStateMap();
+  const focusedDomain =
+    focusedTabId !== undefined ? stateMap[focusedTabId]?.domain : undefined;
+  const openDomains = Object.values(stateMap)
+    .map((s) => s.domain)
+    .filter((d): d is string => !!d);
+  return { focusHistory, focusedDomain, openDomains };
 }
 
 async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'>): Promise<void> {
@@ -40,7 +107,12 @@ async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'
     await updateOnEvent(event);
     if ((event.type === 'open' || event.type === 'navigate') && event.domain) {
       await updateCooccurrenceForOpen(event.domain, event.ts);
-      await trainImplicitOpen(event);
+      // Pass real context so trainImplicitOpen can compute meaningful
+      // embedSim / seqProb / openDomains features at training time. The
+      // pre-fix call sent `focusedDomain: undefined` and `openDomains: []`,
+      // which collapsed every implicit positive into context-free noise.
+      const ctx = await buildOpenContext();
+      await trainImplicitOpen(event, ctx);
     }
   } catch (err) {
     console.error('[chromehomepage] failed to log event', err, event);
@@ -112,6 +184,14 @@ async function startFocusSegment(tabId: number, ts: number, prevTabId?: number):
     title: state.title,
     prevTabId,
   });
+  // Sequence-memory bookkeeping. The buffer state BEFORE we push is the
+  // "history" that led to this focus — train on (history → state.domain),
+  // then push so subsequent transitions see the latest position.
+  if (state.domain && isTrackable(state.url)) {
+    const prevHistory = await getFocusHistory();
+    await observeSequenceTransition(prevHistory, state.domain, ts);
+    await pushFocusHistory(state.domain);
+  }
 }
 
 async function reconcileOpenTabs(): Promise<void> {
@@ -147,8 +227,18 @@ async function reconcileOpenTabs(): Promise<void> {
 chrome.runtime.onInstalled.addListener(async (details) => {
   chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
   chrome.alarms.create('heartbeat', { periodInMinutes: 5 });
-  chrome.alarms.create('nightlyDecay', { periodInMinutes: 60 * 6 });
-  chrome.alarms.create('embeddingRetrain', { periodInMinutes: 60 * 12 });
+  // `delayInMinutes` makes the first fire happen soon after install/update,
+  // not after a full period — without it, embedding waits 12h and forest
+  // waits 8h before their first training pass, which is awful for fresh
+  // installs that just ran the history bootstrap and have plenty of data
+  // to learn from immediately.
+  chrome.alarms.create('nightlyDecay', { delayInMinutes: 30, periodInMinutes: 60 * 6 });
+  chrome.alarms.create('embeddingRetrain', { delayInMinutes: 5, periodInMinutes: 60 * 12 });
+  // Random Forest batch retrain. The OnlineLogReg keeps absorbing live
+  // feedback in between; the forest captures non-linear feature
+  // interactions and gives the recommender a stable second opinion on
+  // each candidate. See src/ml/rf-train.ts.
+  chrome.alarms.create('forestRetrain', { delayInMinutes: 3, periodInMinutes: 60 * 8 });
   await reconcileOpenTabs();
 
   if (details.reason === 'install') {
@@ -167,19 +257,79 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   } else if (details.reason === 'update') {
     // Clean up KV keys orphaned by past schema bumps. Adding to this list
     // is safe — bulkDelete silently ignores keys that don't exist.
-    const STALE_KEYS = ['model:cleanup:v2', 'model:recommend:v2'];
+    const STALE_KEYS = [
+      'model:cleanup:v2',
+      'model:cleanup:v3', // bumped to v4 when cluster features were added
+      'model:recommend:v2',
+      'model:recommend:v3', // bumped to v4 when seqProbShort/Long/Time were added
+    ];
+    let staleDeleted = 0;
     try {
+      const existing = await db.kv.bulkGet(STALE_KEYS);
+      staleDeleted = existing.filter((v) => v !== undefined).length;
       await db.kv.bulkDelete(STALE_KEYS);
     } catch {
       // ignore — kv table may not be ready yet on first SW boot
     }
+
+    // Schema bump or undertrained model → replay implicit training from
+    // existing events so the LR has realistic weights immediately, instead
+    // of forcing the user to wait days for organic events to retrain it.
+    // Also fits the forest. Runs async / non-blocking — recommendations
+    // return immediately with a warming model.
+    //
+    // Without this, surfaces gated on model confidence (OracleHint at
+    // ≥0.55, smart-cleanup auto-select at ≥0.60) silently disappear after
+    // every model version bump until enough live events accumulate.
+    //
+    // The `warmupRecommendIfNeeded` helper internally checks the model's
+    // trained-sample count, so it's safe to call unconditionally — it
+    // no-ops if the model is already mature.
+    void warmupRecommendIfNeeded();
+    void (staleDeleted); // silence unused-var lint; kept above for telemetry
   }
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
   await reconcileOpenTabs();
+  // If the recommend LR is undertrained (< 100 samples) and we have plenty
+  // of events to learn from, replay implicit training once. Covers the
+  // case where a previous schema bump reset the model but the user got the
+  // new build BEFORE the auto-warmup logic existed — without this, surfaces
+  // gated on confidence stay dark forever.
+  void warmupRecommendIfNeeded();
 });
+
+const WARMUP_MIN_SAMPLES = 100;
+const WARMUP_MIN_EVENTS = 200;
+let warmupAttempted = false;
+
+async function warmupRecommendIfNeeded(): Promise<void> {
+  if (warmupAttempted) return;
+  warmupAttempted = true;
+  try {
+    const recRow = await db.kv.get('model:recommend:v4');
+    const rec = recRow?.value as { trainedSamples?: number } | undefined;
+    const trained = rec?.trainedSamples ?? 0;
+    if (trained >= WARMUP_MIN_SAMPLES) return;
+    const eventCount = await db.events.count();
+    if (eventCount < WARMUP_MIN_EVENTS) return;
+
+    const { replayImplicitTraining, trainRecommendForest } = await import(
+      '../ml/rf-train'
+    );
+    const { invalidateForestCache } = await import('../ml/recommend');
+    const replayResult = await replayImplicitTraining();
+    const forestResult = await trainRecommendForest();
+    invalidateForestCache();
+    console.log(
+      `[augur] LR warmup: ${trained} → ${trained + replayResult.openSamples * 6} samples; forest=${forestResult.trained}`,
+    );
+  } catch (err) {
+    console.error('[augur] LR warmup failed', err);
+  }
+}
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'nightlyDecay') {
@@ -188,6 +338,18 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     await setLastAggregateAt(now);
   } else if (alarm.name === 'embeddingRetrain') {
     await trainEmbeddingBatch();
+  } else if (alarm.name === 'forestRetrain') {
+    try {
+      const r = await trainRecommendForest();
+      if (r.trained > 0) {
+        invalidateForestCache();
+        console.log(
+          `[augur] forest retrain: ${r.trained} samples (${r.posSamples} pos, ${r.negSamples} neg)`,
+        );
+      }
+    } catch (err) {
+      console.error('[augur] forest retrain failed', err);
+    }
   }
 });
 
@@ -271,6 +433,66 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         title: changeInfo.title ?? prev.title,
       });
     }
+  }
+
+  // Log every distinct state transition Chrome reports — pin, audible,
+  // muted, discarded, group membership. These are otherwise lost to the
+  // events table and unrecoverable for future model training. Each event
+  // captures the full tab snapshot via meta.snapshot so analyses can
+  // reconstruct context post-hoc.
+  if (changeInfo.pinned !== undefined && tab.url) {
+    await logEvent({
+      type: changeInfo.pinned ? 'tab_pinned' : 'tab_unpinned',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      title: tab.title,
+      pinned: changeInfo.pinned,
+      tabIndex: tab.index,
+    });
+  }
+  if (changeInfo.audible !== undefined && tab.url && isTrackable(tab.url)) {
+    await logEvent({
+      type: changeInfo.audible ? 'tab_audible_start' : 'tab_audible_end',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      title: tab.title,
+      audible: changeInfo.audible,
+    });
+  }
+  if (changeInfo.mutedInfo !== undefined && tab.url && isTrackable(tab.url)) {
+    await logEvent({
+      type: changeInfo.mutedInfo.muted ? 'tab_muted' : 'tab_unmuted',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      muted: changeInfo.mutedInfo.muted,
+      meta: { reason: changeInfo.mutedInfo.reason },
+    });
+  }
+  if (changeInfo.discarded !== undefined && tab.url && isTrackable(tab.url)) {
+    await logEvent({
+      type: changeInfo.discarded ? 'tab_discarded' : 'tab_undiscarded',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      discarded: changeInfo.discarded,
+    });
+  }
+  if (changeInfo.groupId !== undefined && tab.url && isTrackable(tab.url)) {
+    await logEvent({
+      type: changeInfo.groupId >= 0 ? 'tab_grouped' : 'tab_ungrouped',
+      tabId,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      groupId: changeInfo.groupId,
+    });
   }
 
   if (changeInfo.status !== 'complete') return;
@@ -418,4 +640,114 @@ chrome.idle.onStateChanged.addListener(async (state) => {
       }
     }
   }
+});
+
+// ── Tab move + attach/detach (cross-window moves) ──────────────────
+// chrome.tabs.onMoved fires for in-window reorders; onAttached / onDetached
+// fire for cross-window drags. None of these are inferable from onUpdated.
+chrome.tabs.onMoved.addListener(async (tabId, info) => {
+  const state = await getTabState(tabId);
+  await logEvent({
+    type: 'tab_moved',
+    tabId,
+    windowId: info.windowId,
+    url: state?.url,
+    domain: state?.domain,
+    title: state?.title,
+    tabIndex: info.toIndex,
+    meta: { fromIndex: info.fromIndex, toIndex: info.toIndex },
+  });
+});
+
+chrome.tabs.onAttached.addListener(async (tabId, info) => {
+  const state = await getTabState(tabId);
+  await logEvent({
+    type: 'tab_attached',
+    tabId,
+    windowId: info.newWindowId,
+    url: state?.url,
+    domain: state?.domain,
+    tabIndex: info.newPosition,
+    meta: { newWindowId: info.newWindowId, newPosition: info.newPosition },
+  });
+});
+
+chrome.tabs.onDetached.addListener(async (tabId, info) => {
+  const state = await getTabState(tabId);
+  await logEvent({
+    type: 'tab_detached',
+    tabId,
+    windowId: info.oldWindowId,
+    url: state?.url,
+    domain: state?.domain,
+    tabIndex: info.oldPosition,
+    meta: { oldWindowId: info.oldWindowId, oldPosition: info.oldPosition },
+  });
+});
+
+// ── Tab-group lifecycle ─────────────────────────────────────────────
+// Capture group create/update/remove so future models can reconstruct
+// "user organized N tabs into a group named X at time T". Otherwise
+// derivable only from periodic snapshots, which we don't take.
+if (chrome.tabGroups) {
+  chrome.tabGroups.onCreated.addListener(async (group) => {
+    await logEvent({
+      type: 'group_created',
+      windowId: group.windowId,
+      groupId: group.id,
+      groupTitle: group.title,
+      meta: { color: group.color, collapsed: group.collapsed },
+    });
+  });
+  chrome.tabGroups.onUpdated.addListener(async (group) => {
+    await logEvent({
+      type: 'group_updated',
+      windowId: group.windowId,
+      groupId: group.id,
+      groupTitle: group.title,
+      meta: { color: group.color, collapsed: group.collapsed },
+    });
+  });
+  chrome.tabGroups.onRemoved.addListener(async (group) => {
+    await logEvent({
+      type: 'group_removed',
+      windowId: group.windowId,
+      groupId: group.id,
+      groupTitle: group.title,
+    });
+  });
+}
+
+// ── Window lifecycle ────────────────────────────────────────────────
+// onCreated fires when the user spawns a new window; onRemoved when one
+// closes (even if it had open tabs that get tracked individually).
+chrome.windows.onCreated.addListener(async (window) => {
+  await logEvent({
+    type: 'window_created',
+    windowId: window.id,
+    meta: {
+      type: window.type,
+      state: window.state,
+      incognito: window.incognito,
+    },
+  });
+});
+
+chrome.windows.onRemoved.addListener(async (windowId) => {
+  await logEvent({
+    type: 'window_removed',
+    windowId,
+  });
+});
+
+// We already react to onFocusChanged for state-management purposes (see
+// above). Here we ALSO log it as an event — useful for reconstructing
+// "which window was the user actually looking at" for cleanup-feature
+// post-hoc analysis.
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  await logEvent({
+    type: 'window_focus_changed',
+    windowId: windowId === chrome.windows.WINDOW_ID_NONE ? undefined : windowId,
+    meta: { lostFocus: windowId === chrome.windows.WINDOW_ID_NONE },
+  });
 });

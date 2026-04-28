@@ -5,6 +5,7 @@ import type {
   OpenCandidate,
   RecommendFeatures,
   StashedTab,
+  TabEvent,
   TodayRecap,
   Workspace,
   WorkspaceTab,
@@ -40,12 +41,24 @@ export type RpcRequest =
     }
   | { kind: 'aggregate.rebuild' }
   | { kind: 'embedding.retrain' }
+  | { kind: 'forest.retrain' }
+  | { kind: 'sequence.rebuild' }
+  | { kind: 'lr.replay' }
   | { kind: 'insights.get' }
   | { kind: 'data.summary' }
   | { kind: 'data.export' }
   | { kind: 'data.wipe' }
   | { kind: 'data.resetModels' }
   | { kind: 'data.bootstrapHistory'; force?: boolean }
+  | { kind: 'data.exportDebugBundle' }
+  | { kind: 'data.exportUserMigration' }
+  | {
+      // Dashboard-initiated event log entry. `partial` is a TabEvent without
+      // ts/hour/dow (SW stamps those). Used for product-surface events like
+      // OracleHint accept, smart-cleanup commit, search execute, etc.
+      kind: 'event.log';
+      partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek' | 'id'>;
+    }
   | { kind: 'model.inspect' }
   | { kind: 'stash.add'; items: StashInput[] }
   | { kind: 'stash.list' }
@@ -72,6 +85,21 @@ export type RpcResponse =
   | { ok: true; kind: 'stash.list'; data: StashedTab[] }
   | { ok: true; kind: 'stash.add'; data: number[] }
   | { ok: true; kind: 'embedding.retrain'; data: { steps: number; vocab: number } }
+  | {
+      ok: true;
+      kind: 'forest.retrain';
+      data: { trained: number; posSamples: number; negSamples: number };
+    }
+  | {
+      ok: true;
+      kind: 'sequence.rebuild';
+      data: { observed: number; bigramKeys: number };
+    }
+  | {
+      ok: true;
+      kind: 'lr.replay';
+      data: { openSamples: number; cleanupSamples: number };
+    }
   | { ok: true; kind: 'workspace.list'; data: Workspace[] }
   | { ok: true; kind: 'workspace.save'; data: number }
   | { ok: true; kind: 'insights.today'; data: TodayRecap }
@@ -80,6 +108,23 @@ export type RpcResponse =
       ok: true;
       kind: 'data.bootstrapHistory';
       data: { events: number; domains: number; skipped: boolean; reason?: string };
+    }
+  | {
+      ok: true;
+      kind: 'data.exportDebugBundle';
+      // Base64-encoded zip bytes — dashboard converts to Blob and downloads.
+      data: { filename: string; base64: string; size: number };
+    }
+  | {
+      ok: true;
+      kind: 'data.exportUserMigration';
+      data: {
+        augurUserMigration: 1;
+        exportedAt: number;
+        workspaces: unknown[];
+        pins: unknown[];
+        stash: unknown[];
+      };
     }
   | { ok: true; kind: 'ack' }
   | { ok: false; error: string };

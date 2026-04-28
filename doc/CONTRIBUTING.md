@@ -28,6 +28,13 @@ To test the dashboard:
 | `npm run icons` | Regenerate 16/32/48/128 PNGs from `public/icons/icon.svg` |
 | `npm run build` | Production build to `dist/` |
 | `npm run package` | `build` + zip to `augur-<version>.zip` (also strips `dist/demo/`) |
+| `npm run extension-key` | Generate a stable RSA-2048 public key for manifest's `key` field — paste into `src/manifest.ts` to keep the dev extension ID stable across rebuilds |
+
+### Stable dev extension ID
+
+Without a `key` in `src/manifest.ts`, Chrome derives the extension ID from the unpacked install path. **Loading the same build from a different directory creates a new extension ID with a fresh IndexedDB** — events, model weights, and saved workspaces appear wiped (they're still there under the old ID, but inaccessible).
+
+Run `npm run extension-key` once, paste the printed string into `defineManifest({ ..., key: '...' })`, rebuild. The dev extension ID is now stable across rebuilds / re-installs, so IndexedDB persists. The Chrome Web Store overrides this field with its own production key on publish, so the dev key is safe to commit.
 
 `prebuild` and `predev` both run `icons` so the PNG icons stay in sync with the SVG source.
 

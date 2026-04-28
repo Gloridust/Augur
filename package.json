@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "icons": "node scripts/generate-icons.mjs",
+    "extension-key": "node scripts/generate-extension-key.mjs",
     "predev": "node scripts/generate-icons.mjs",
     "prebuild": "node scripts/generate-icons.mjs",
     "dev": "vite",

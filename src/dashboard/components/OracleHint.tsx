@@ -4,6 +4,7 @@ import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn';
 import type { OpenCandidate } from '../../shared/types';
 import {
   fetchOpenRecommendations,
+  logUiEvent,
   reportOpenFeedback,
 } from '../api/recommendations';
 
@@ -50,6 +51,14 @@ export function OracleHint() {
         setCandidates(items.slice(0, 3));
         setSelectedSlot(1);
         setVisible(true);
+        logUiEvent({
+          type: 'oracle_shown',
+          domains: items.slice(0, 3).map((c) => c.domain),
+          meta: {
+            scores: items.slice(0, 3).map((c) => c.score),
+            reasons: items.slice(0, 3).map((c) => c.reason),
+          },
+        });
       }
     });
     return () => {
@@ -59,11 +68,19 @@ export function OracleHint() {
 
   const dismiss = () => {
     setClosing(true);
+    logUiEvent({ type: 'oracle_dismissed' });
     window.setTimeout(() => setVisible(false), 220);
   };
 
   const open = (c: OpenCandidate) => {
     void reportOpenFeedback(c.domain, c.features, 'accepted');
+    logUiEvent({
+      type: 'oracle_accepted',
+      domain: c.domain,
+      url: c.url,
+      slotIndex: selectedSlot,
+      meta: { reason: c.reason, score: c.score },
+    });
     window.location.href = c.url;
   };
 

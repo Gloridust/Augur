@@ -28,6 +28,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { activateTab, closeTabs, useTabs } from '../hooks/useTabs';
 import {
   fetchAllCleanupCandidates,
+  logUiEvent,
   reportCleanupFeedback,
   stashItems,
 } from '../api/recommendations';
@@ -205,6 +206,22 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
 
   const closeSelected = async () => {
     const ids = Array.from(selected);
+    // Capture commit-time AI batch composition before flush clears it.
+    if (aiSelected.size > 0) {
+      const aiIds = Array.from(aiSelected.keys());
+      const acceptedIds = aiIds.filter((id) => selected.has(id));
+      const rejectedIds = aiIds.filter((id) => !selected.has(id));
+      logUiEvent({
+        type: 'smart_cleanup_committed',
+        count: ids.length,
+        meta: {
+          aiSuggested: aiIds.length,
+          aiAccepted: acceptedIds.length,
+          aiRejected: rejectedIds.length,
+          manualAdditions: ids.length - acceptedIds.length,
+        },
+      });
+    }
     await flushSmartCleanupFeedback(selected);
     await closeTabs(ids);
     setSelected(new Set());
@@ -261,6 +278,17 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
           }
           return;
         }
+        logUiEvent({
+          type: 'smart_cleanup_shown',
+          count: map.size,
+          domains: Array.from(map.values()).map((c) =>
+            extractDomain(c.tab.url),
+          ).filter(Boolean),
+          meta: {
+            announce,
+            scores: Array.from(map.values()).map((c) => c.score),
+          },
+        });
         setAiSelected(map);
         // Functional update so this works regardless of stale `selected`
         // captures (important for the auto-run path).

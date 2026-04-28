@@ -2,14 +2,20 @@ import { db } from '../shared/db';
 import { BetaBandit, type BanditState } from './models/bandit';
 import { SkipGramEmbedding, type EmbeddingState } from './models/embedding';
 import { OnlineLogReg, type LogRegState } from './models/logreg';
+import { DomainSequenceMemory, type SequenceMemoryState } from './models/markov';
+import { RandomForest, type ForestState } from './models/randomforest';
 
 // v3 = expanded feature set (cyclic time, audible/discarded, tab position,
 // window homogeneity, named groups, navCount, idle) + Adam optimizer
 // state + L1. Bumping the key resets old saved weights so we don't
 // silently mis-map indices; events stay intact and the model warms back
 // up via incremental updates.
-const KV_CLEANUP_MODEL = 'model:cleanup:v3';
-const KV_RECOMMEND_MODEL = 'model:recommend:v3';
+// v4 adds two embedding-cluster features (inActiveCluster, clusterStaleness)
+const KV_CLEANUP_MODEL = 'model:cleanup:v4';
+// v4 adds three sequence-memory features (seqProbShort/Long/Time).
+const KV_RECOMMEND_MODEL = 'model:recommend:v4';
+const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
+const KV_RECOMMEND_FOREST = 'model:recommend:forest:v1';
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';
 const KV_RECOMMEND_BANDIT = 'bandit:recommend:v1';
 const KV_EMBEDDING = 'embedding:v1';
@@ -82,4 +88,22 @@ export async function saveEmbedding(emb: SkipGramEmbedding): Promise<void> {
 
 export async function getLastEmbedTrainAt(): Promise<number> {
   return (await loadKV<number>(KV_LAST_EMBED_TRAIN)) ?? 0;
+}
+
+export async function loadSequenceMemory(): Promise<DomainSequenceMemory> {
+  const raw = await loadKV<SequenceMemoryState>(KV_SEQUENCE_MEMORY);
+  return DomainSequenceMemory.load(raw);
+}
+
+export async function saveSequenceMemory(mem: DomainSequenceMemory): Promise<void> {
+  await saveKV(KV_SEQUENCE_MEMORY, mem.serialize());
+}
+
+export async function loadRecommendForest(): Promise<RandomForest> {
+  const raw = await loadKV<ForestState>(KV_RECOMMEND_FOREST);
+  return RandomForest.load(raw);
+}
+
+export async function saveRecommendForest(forest: RandomForest): Promise<void> {
+  await saveKV(KV_RECOMMEND_FOREST, forest.serialize());
 }

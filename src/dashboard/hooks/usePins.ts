@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, extractDomain } from '../../shared/db';
 import type { PinnedItem } from '../../shared/types';
 import { isCooldownActive, useSmartPinSort } from './useSmartPinSort';
-import { rerankPinsViaModel } from '../api/recommendations';
+import { logUiEvent, rerankPinsViaModel } from '../api/recommendations';
 
 export interface AddPinInput {
   url: string;
@@ -129,11 +129,24 @@ export function usePins(): UsePinsResult {
       pinnedAt: Date.now(),
       manualOrder: -Date.now(),
     });
+    logUiEvent({
+      type: 'pin_added',
+      url: input.url,
+      domain: extractDomain(input.url),
+      title: input.title,
+    });
   }, []);
 
   const remove = useCallback(async (key: string) => {
     const existing = await db.pins.where('key').equals(key).first();
-    if (existing?.id !== undefined) await db.pins.delete(existing.id);
+    if (existing?.id !== undefined) {
+      await db.pins.delete(existing.id);
+      logUiEvent({
+        type: 'pin_removed',
+        url: existing.url,
+        domain: existing.domain,
+      });
+    }
   }, []);
 
   const reorder = useCallback(async (orderedKeys: string[]) => {
@@ -147,6 +160,10 @@ export function usePins(): UsePinsResult {
       .filter((x): x is { id: number; manualOrder: number } => !!x);
     await db.transaction('rw', db.pins, async () => {
       for (const u of updates) await db.pins.update(u.id, { manualOrder: u.manualOrder });
+    });
+    logUiEvent({
+      type: 'pin_reordered',
+      count: updates.length,
     });
   }, []);
 

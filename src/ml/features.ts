@@ -42,6 +42,9 @@ export const CLEANUP_FEATURE_NAMES: Array<keyof CleanupFeatures> = [
   'isInNamedGroup',
   'navCount',
   'isIdle',
+  // ── v4: embedding-cluster task-state ────────────────────────────────
+  'inActiveCluster',
+  'clusterStaleness',
 ];
 
 export const RECOMMEND_FEATURE_NAMES: Array<keyof RecommendFeatures> = [
@@ -61,6 +64,10 @@ export const RECOMMEND_FEATURE_NAMES: Array<keyof RecommendFeatures> = [
   'hourCos',
   'dowSin',
   'dowCos',
+  // ── v4 additions: three-timescale sequence memory ───────────────────
+  'seqProbShort',
+  'seqProbLong',
+  'seqProbTime',
 ];
 
 // Cyclic encoding: project an integer position on a circle of period N to
@@ -99,6 +106,11 @@ export function buildCleanupFeatures(args: {
   groupTitleById?: Record<number, string | undefined>;
   // System-level idle state (chrome.idle.IdleState).
   idleState?: 'active' | 'idle' | 'locked';
+  // Embedding-cluster signals (computed once per cleanup pass and passed
+  // through). 0 if clustering wasn't performed or this tab wasn't in any
+  // cluster (e.g. unknown domain with no embedding).
+  inActiveCluster?: boolean;
+  clusterStaleness?: number;
 }): CleanupFeatures {
   const {
     tab,
@@ -112,6 +124,8 @@ export function buildCleanupFeatures(args: {
     activeWindowId,
     groupTitleById,
     idleState,
+    inActiveCluster,
+    clusterStaleness,
   } = args;
   const tabAgeMs = state ? Math.max(0, now - state.openedAt) : 0;
   const focusMs = state?.focusMs ?? 0;
@@ -167,6 +181,8 @@ export function buildCleanupFeatures(args: {
     isInNamedGroup,
     navCount: state?.navigationCount ?? 0,
     isIdle: idleState && idleState !== 'active' ? 1 : 0,
+    inActiveCluster: inActiveCluster ? 1 : 0,
+    clusterStaleness: clusterStaleness ?? 0,
   };
 }
 
@@ -178,6 +194,12 @@ export async function buildRecommendFeatures(args: {
   embedSimToFocused?: number;
   visitVelocity?: number;
   sessionContext?: number;
+  // Sequence-memory probabilities for this candidate at three timescales.
+  // All three default to 0 = "no signal" if the caller didn't compute them
+  // (e.g. the implicit-train path on cold start).
+  seqProbShort?: number;
+  seqProbLong?: number;
+  seqProbTime?: number;
   now: number;
 }): Promise<RecommendFeatures> {
   const {
@@ -188,6 +210,9 @@ export async function buildRecommendFeatures(args: {
     embedSimToFocused,
     visitVelocity,
     sessionContext,
+    seqProbShort,
+    seqProbLong,
+    seqProbTime,
     now,
   } = args;
   const hourCyc = cyclic(context.hour, 24);
@@ -210,6 +235,9 @@ export async function buildRecommendFeatures(args: {
       hourCos: hourCyc.cos,
       dowSin: dowCyc.sin,
       dowCos: dowCyc.cos,
+      seqProbShort: seqProbShort ?? 0,
+      seqProbLong: seqProbLong ?? 0,
+      seqProbTime: seqProbTime ?? 0,
     };
   }
   const hourSoft = softmax(stats.hourDist.map((v) => Math.log1p(v)));
@@ -234,6 +262,9 @@ export async function buildRecommendFeatures(args: {
     hourCos: hourCyc.cos,
     dowSin: dowCyc.sin,
     dowCos: dowCyc.cos,
+    seqProbShort: seqProbShort ?? 0,
+    seqProbLong: seqProbLong ?? 0,
+    seqProbTime: seqProbTime ?? 0,
   };
 }
 
