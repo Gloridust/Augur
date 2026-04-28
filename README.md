@@ -367,6 +367,22 @@ npm run package
 
 ---
 
+## Docs · 文档
+
+Deep-dive docs for each subsystem live in [`doc/`](./doc/). · 各子系统的详细文档在 [`doc/`](./doc/)。
+
+| Doc | Topic |
+|---|---|
+| [doc/DESIGN.md](./doc/DESIGN.md) | Visual identity, theme tokens, component-level UX decisions |
+| [doc/ARCHITECTURE.md](./doc/ARCHITECTURE.md) | SW / dashboard / RPC split, build pipeline |
+| [doc/ML.md](./doc/ML.md) | Online LR + Adam + L1, Platt calibration, bandit, embeddings, smart-cleanup feedback loop |
+| [doc/STORAGE.md](./doc/STORAGE.md) | Dexie schema, KV keys, chrome.storage usage rules, update preservation |
+| [doc/PRIVACY.md](./doc/PRIVACY.md) | What's collected, where it lives, what leaves the browser, wipe procedure |
+| [doc/API.md](./doc/API.md) | Typed RPC reference — every `RpcRequest` / `RpcResponse` variant |
+| [doc/CONTRIBUTING.md](./doc/CONTRIBUTING.md) | Dev workflow, code conventions, how to add a feature / RPC / ML feature |
+
+---
+
 ## Contributing · 贡献
 
 PRs welcome. The codebase is structured around three boundaries: · 欢迎 PR。代码三道边界：
