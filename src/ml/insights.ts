@@ -112,14 +112,12 @@ export async function buildTodayRecap(now: number = Date.now()): Promise<TodayRe
     .between(startTs, now, true, true)
     .toArray();
 
-  let tabsOpened = 0;
   const domains = new Set<string>();
   const domainFocus = new Map<string, number>();
   const hourCount = new Array(24).fill(0);
   let totalFocusMs = 0;
 
   for (const e of todayEvents) {
-    if (e.type === 'open') tabsOpened += 1;
     if (e.domain) domains.add(e.domain);
     if (e.type === 'open' || e.type === 'navigate' || e.type === 'focus') {
       const h = new Date(e.ts).getHours();
@@ -130,6 +128,24 @@ export async function buildTodayRecap(now: number = Date.now()): Promise<TodayRe
       domainFocus.set(e.domain, (domainFocus.get(e.domain) ?? 0) + fm);
       totalFocusMs += fm;
     }
+  }
+
+  // tabsOpened: count tabs whose FIRST EVER event in db.events is today.
+  // Robust to event-type drift: pre-fix builds didn't log 'open' on the
+  // create-then-navigate path (only 'navigate'), so a literal `type==='open'`
+  // count showed 0 even after lots of activity. Using "first-seen-today
+  // per tabId" instead means whatever the SW happened to log first counts.
+  // Synthesized history-bootstrap events have no tabId so they don't
+  // pollute the per-tab map.
+  const tabFirstSeen = new Map<number, number>();
+  const allEvents = await db.events.orderBy('ts').toArray();
+  for (const e of allEvents) {
+    if (e.tabId === undefined) continue;
+    if (!tabFirstSeen.has(e.tabId)) tabFirstSeen.set(e.tabId, e.ts);
+  }
+  let tabsOpened = 0;
+  for (const ts of tabFirstSeen.values()) {
+    if (ts >= startTs) tabsOpened += 1;
   }
 
   let topDomain: TodayRecap['topDomain'];

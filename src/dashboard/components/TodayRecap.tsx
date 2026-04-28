@@ -96,7 +96,13 @@ export function TodayRecap() {
       spacing={{ xs: 2.5, md: 4 }}
       useFlexGap
       flexWrap="wrap"
-      sx={{ px: 0.5 }}
+      sx={{
+        px: 0.5,
+        // Sit on the right of the hero row (the parent grid puts us in the
+        // 1fr column next to the Greeting). Items wrap onto new lines on
+        // narrow screens, but stay right-aligned.
+        justifyContent: 'flex-end',
+      }}
     >
       <Stat
         icon={<OpenInNewIcon fontSize="small" />}
