@@ -4,9 +4,9 @@
 
 # Augur
 
-**A learning new-tab dashboard for Chrome that anticipates what you need.**
+**A learning new-tab dashboard for Chrome — anticipates what you'll open, organizes the tabs you've got, and chats with you via on-device Gemini. Fully local, zero telemetry.**
 **·**
-**一个会预测的 Chrome 新标签页，比你先一步知道你想打开什么。**
+**一个会学习的 Chrome 新标签页——预判你接下来想打开什么、管好你已经开着的一堆标签、和本地 Gemini 边用边聊。全程本地，零遥测。**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6.svg)](./tsconfig.app.json)
