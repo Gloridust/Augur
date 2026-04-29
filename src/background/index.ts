@@ -262,6 +262,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       'model:cleanup:v3', // bumped to v4 when cluster features were added
       'model:recommend:v2',
       'model:recommend:v3', // bumped to v4 when seqProbShort/Long/Time were added
+      'model:recommend:v4', // bumped to v5 when implicit-train class weights were fixed
     ];
     let staleDeleted = 0;
     try {
@@ -309,7 +310,7 @@ async function warmupRecommendIfNeeded(): Promise<void> {
   if (warmupAttempted) return;
   warmupAttempted = true;
   try {
-    const recRow = await db.kv.get('model:recommend:v4');
+    const recRow = await db.kv.get('model:recommend:v5');
     const rec = recRow?.value as { trainedSamples?: number } | undefined;
     const trained = rec?.trainedSamples ?? 0;
     if (trained >= WARMUP_MIN_SAMPLES) return;

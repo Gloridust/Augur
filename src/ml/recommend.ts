@@ -366,15 +366,28 @@ export async function trainImplicitOpen(
     });
   };
 
+  // Class weights must balance — total positive weight ≈ total negative
+  // weight. Otherwise the bias drifts toward the side with more cumulative
+  // weight, regardless of the empirical class ratio. Earlier this used
+  // pos=0.4 and neg=0.2×5 (=1.0 total), giving 2.5× negative pressure;
+  // the LR's bias collapsed to -3 and predictions pinned near zero,
+  // breaking the OracleHint ≥0.55 confidence gate.
+  //
+  // New ratio: pos=1.0, neg=0.2×5 (=1.0 total) — perfectly balanced.
+  // Empirical class ratio is still ~17% positive in raw count, but the
+  // model now learns "given the focused-tab context, what's the relative
+  // probability of each candidate" without bias drift.
+  const NEG_COUNT = 5;
+  const POS_WEIGHT = 1.0;
+  const NEG_WEIGHT = 0.2;
+
   // Positive sample for the domain the user actually opened.
   const posFeatures = await buildFor(event.domain, true);
-  model.update(vectorFromRecommend(posFeatures), 1, 0.4);
+  model.update(vectorFromRecommend(posFeatures), 1, POS_WEIGHT);
 
-  // Negative samples: pick 5 random domains from the frecency pool that
-  // were NOT just opened. These teach the LR to discriminate "given THIS
+  // Negative samples: random domains from the frecency pool that were
+  // NOT just opened. These teach the LR to discriminate "given THIS
   // context, the things you DIDN'T open are negatives."
-  const NEG_COUNT = 5;
-  const NEG_WEIGHT = 0.2;
   const pool = await getTopDomainsByFrecency(60);
   const eligible = pool.filter(
     (p) => p.domain && p.domain !== event.domain && !p.domain.startsWith('chrome'),

@@ -20,7 +20,14 @@ import {
 //   └──────────────────────────────────────────┘
 // Default selection is the centre (most-likely) slot.
 
-const CONFIDENCE_THRESHOLD = 0.55;
+// Calibrated probability the top candidate must hit before the capsule
+// shows. 0.55 was too strict given the recommend head's empirical class
+// rate (~17% positive weighted), which after Platt calibration puts
+// strong-but-not-certain candidates in the 0.45–0.65 range. 0.45 hits
+// "model genuinely thinks this is more likely than not" without firing
+// for noise. The smart-cleanup auto-select stays at 0.60 — closing tabs
+// is more destructive than opening them, so it warrants stricter gating.
+const CONFIDENCE_THRESHOLD = 0.45;
 const AUTO_DISMISS_MS = 3_000;
 
 function favicon(url: string): string {
