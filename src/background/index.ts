@@ -436,6 +436,41 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     }
   }
 
+  // ── Fast path: URL change detection (handles SPA + full reloads) ──
+  // Chrome fires onUpdated with `changeInfo.url` set whenever the tab's
+  // URL changes — for full-page navigations AND for SPA pushState /
+  // replaceState calls. Status only transitions to 'complete' on full
+  // reloads, so the `status === 'complete'` branch below misses every
+  // in-app navigation in GitHub / Gmail / Twitter / Linear / etc.
+  //
+  // We process changeInfo.url directly here, BEFORE the status gate.
+  // Multiple onUpdated fires for the same URL (commit + complete) get
+  // de-duped by the `prev.url !== changeInfo.url` check; subsequent fires
+  // see the just-updated state and become no-ops.
+  if (changeInfo.url && isTrackable(changeInfo.url)) {
+    const prev = await getTabState(tabId);
+    if (prev && prev.url !== changeInfo.url) {
+      const newDomain = extractDomain(changeInfo.url);
+      await setTabState({
+        ...prev,
+        url: changeInfo.url,
+        domain: newDomain,
+        title: tab.title ?? prev.title,
+        pinned: tab.pinned ?? prev.pinned,
+        groupId: tab.groupId ?? prev.groupId,
+        navigationCount: (prev.navigationCount ?? 0) + 1,
+      });
+      await logEvent({
+        type: 'navigate',
+        tabId,
+        windowId: tab.windowId,
+        url: changeInfo.url,
+        domain: newDomain,
+        title: tab.title ?? prev.title,
+      });
+    }
+  }
+
   // Log every distinct state transition Chrome reports — pin, audible,
   // muted, discarded, group membership. These are otherwise lost to the
   // events table and unrecoverable for future model training. Each event
