@@ -366,17 +366,29 @@ export async function trainImplicitOpen(
     });
   };
 
-  // Class weights must balance — total positive weight ≈ total negative
-  // weight. Otherwise the bias drifts toward the side with more cumulative
-  // weight, regardless of the empirical class ratio. Earlier this used
-  // pos=0.4 and neg=0.2×5 (=1.0 total), giving 2.5× negative pressure;
-  // the LR's bias collapsed to -3 and predictions pinned near zero,
-  // breaking the OracleHint ≥0.55 confidence gate.
+  // Class weights are balanced — total positive weight (1.0) ≈ total
+  // negative weight (5 × 0.2 = 1.0).
   //
-  // New ratio: pos=1.0, neg=0.2×5 (=1.0 total) — perfectly balanced.
-  // Empirical class ratio is still ~17% positive in raw count, but the
-  // model now learns "given the focused-tab context, what's the relative
-  // probability of each candidate" without bias drift.
+  // ── Negative-sample distribution fix ──────────────────────────────
+  // The previous version sampled negatives from `getTopDomainsByFrecency(60)`,
+  // which created a systematic bias: top-frecency domains tend to have
+  // (a) high co-occurrence with whatever's focused, (b) high visit velocity,
+  // (c) high embed similarity. So the LR effectively learned "popular
+  // domain features = negative" — flipping cooccurrence/velocity/freqDecay
+  // weights to negative. At scoring time, the user's actual workflow
+  // partners (which by definition co-occur with the focused tab) got
+  // ranked DOWN, while the top-1 was always some edge-case candidate.
+  // OracleHint showed lots of impressions but 0% acceptance because the
+  // top pick was systematically wrong.
+  //
+  // Fix: sample negatives UNIFORMLY from `db.domains`. The frequency
+  // distribution of negatives now matches the population, not the
+  // top-tail, so the model can't learn "frecency = negative" or
+  // "co-occurrence = negative" as a spurious shortcut.
+  //
+  // Also exclude the focused domain — it would otherwise be sampled as
+  // a negative (since user just navigated FROM it, not TO it), which is
+  // a noisy label.
   const NEG_COUNT = 5;
   const POS_WEIGHT = 1.0;
   const NEG_WEIGHT = 0.2;
@@ -385,17 +397,28 @@ export async function trainImplicitOpen(
   const posFeatures = await buildFor(event.domain, true);
   model.update(vectorFromRecommend(posFeatures), 1, POS_WEIGHT);
 
-  // Negative samples: random domains from the frecency pool that were
-  // NOT just opened. These teach the LR to discriminate "given THIS
-  // context, the things you DIDN'T open are negatives."
-  const pool = await getTopDomainsByFrecency(60);
-  const eligible = pool.filter(
-    (p) => p.domain && p.domain !== event.domain && !p.domain.startsWith('chrome'),
-  );
-  const shuffled = eligible.sort(() => Math.random() - 0.5).slice(0, NEG_COUNT);
-  for (const stat of shuffled) {
-    const negFeatures = await buildFor(stat.domain, openDomains.includes(stat.domain));
-    model.update(vectorFromRecommend(negFeatures), 0, NEG_WEIGHT);
+  // Negative samples — uniform random over the entire domain population,
+  // not biased toward popular domains.
+  const allDomains = await db.domains.toArray();
+  const exclude = new Set<string>([event.domain]);
+  if (focusedDomain) exclude.add(focusedDomain);
+  const eligible = allDomains
+    .map((d) => d.domain)
+    .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'));
+  if (eligible.length > 0) {
+    // Fisher-Yates partial shuffle for unbiased sampling without replacement.
+    const sampled: string[] = [];
+    const pool = eligible.slice();
+    const k = Math.min(NEG_COUNT, pool.length);
+    for (let i = 0; i < k; i++) {
+      const j = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+      sampled.push(pool[i]);
+    }
+    for (const domain of sampled) {
+      const negFeatures = await buildFor(domain, openDomains.includes(domain));
+      model.update(vectorFromRecommend(negFeatures), 0, NEG_WEIGHT);
+    }
   }
 
   await saveRecommendModel(model);
