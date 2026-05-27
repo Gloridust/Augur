@@ -38,6 +38,7 @@ import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
 import { useSmartPinSort } from '../hooks/useSmartPinSort';
 import { useGeminiHelpersPref } from '../hooks/useGeminiHelpers';
+import { useOracleHintPref } from '../hooks/useOracleHintPref';
 import { ModelDebugPanel } from './ModelDebugPanel';
 import { SetAsHomepageGuide } from './SetAsHomepageGuide';
 
@@ -64,6 +65,7 @@ export function SettingsDialog({ open, onClose }: Props) {
   const [userName, setStoredUserName] = useUserNameField();
   const [userNameDraft, setUserNameDraft] = useState(userName);
   const [smartPinSort, setSmartPinSort] = useSmartPinSort();
+  const [oracleHintEnabled, setOracleHintEnabled] = useOracleHintPref();
   const {
     enabled: geminiEnabled,
     setEnabled: setGeminiEnabled,
@@ -302,8 +304,29 @@ export function SettingsDialog({ open, onClose }: Props) {
             </Box>
             <Stack spacing={1.5}>
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {t('settings.pinsTitle')}
+                {t('settings.predictionsTitle')}
               </Typography>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                }}
+              >
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography variant="body2">
+                    {t('settings.oracleHint')}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {t('settings.oracleHintHint')}
+                  </Typography>
+                </Box>
+                <Switch
+                  checked={oracleHintEnabled}
+                  onChange={(_, v) => setOracleHintEnabled(v)}
+                />
+              </Box>
               <Box
                 sx={{
                   display: 'flex',
@@ -359,115 +382,139 @@ export function SettingsDialog({ open, onClose }: Props) {
         )}
 
         {tab === 'data' && (
-          <Stack spacing={3}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-              {t('settings.dataTitle')}
-            </Typography>
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, 1fr)',
-                gap: 2,
-                p: 2,
-                borderRadius: 3,
-                backgroundColor: 'var(--mui-palette-action-hover)',
-              }}
-            >
-              <Stat label={t('settings.events')} value={summary?.eventCount ?? '—'} />
-              <Stat label={t('settings.domains')} value={summary?.domainCount ?? '—'} />
-              <Stat label={t('settings.feedback')} value={summary?.feedbackCount ?? '—'} />
-              <Stat
-                label={t('settings.firstEvent')}
-                value={formatDate(summary?.firstEventAt ?? null)}
-              />
-              <Stat
-                label={t('settings.cleanupTraining')}
-                value={`${summary?.cleanupTrainedSamples ?? 0} / ${summary?.cleanupPositiveSamples ?? 0}`}
-              />
-              <Stat
-                label={t('settings.recommendTraining')}
-                value={`${summary?.recommendTrainedSamples ?? 0} / ${summary?.recommendPositiveSamples ?? 0}`}
-              />
-            </Box>
-            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-              <Tooltip title={t('settings.historyBootstrapTooltip')}>
-                <span>
-                  <Button
-                    onClick={onSeedHistory}
-                    startIcon={<HistoryIcon />}
-                    disabled={busy}
-                    variant="outlined"
-                  >
-                    {t('settings.historyBootstrap')}
-                  </Button>
-                </span>
-              </Tooltip>
-              <Tooltip title={t('settings.exportTooltip')}>
-                <span>
-                  <Button
-                    onClick={onExport}
-                    startIcon={<DownloadIcon />}
-                    disabled={busy}
-                    variant="outlined"
-                  >
-                    {t('settings.export')}
-                  </Button>
-                </span>
-              </Tooltip>
-              <Tooltip title={t('settings.debugExportTooltip')}>
-                <span>
-                  <Button
-                    onClick={onExportDebug}
-                    startIcon={<BugReportIcon />}
-                    disabled={busy}
-                    variant="outlined"
-                  >
-                    {t('settings.debugExport')}
-                  </Button>
-                </span>
-              </Tooltip>
-              <Tooltip title={t('settings.migrationExportTooltip')}>
-                <span>
-                  <Button
-                    onClick={onExportMigration}
-                    startIcon={<LuggageIcon />}
-                    disabled={busy}
-                    variant="outlined"
-                  >
-                    {t('settings.migrationExport')}
-                  </Button>
-                </span>
-              </Tooltip>
-              {confirmingWipe ? (
-                <>
-                  <Button
-                    onClick={onWipe}
-                    startIcon={<DeleteForeverIcon />}
-                    disabled={busy}
-                    variant="contained"
-                    color="error"
-                  >
-                    {t('settings.wipeConfirm')}
-                  </Button>
-                  <Button onClick={() => setConfirmingWipe(false)} disabled={busy}>
-                    {t('settings.cancel')}
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  onClick={() => setConfirmingWipe(true)}
-                  startIcon={<RestartAltIcon />}
-                  variant="text"
-                  color="error"
-                  disabled={busy}
-                >
-                  {t('settings.wipe')}
-                </Button>
-              )}
+          <Stack spacing={3} divider={<Divider flexItem />}>
+            {/* ── Your data summary ─────────────────────────────────── */}
+            <Stack spacing={1.5}>
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                  {t('settings.dataTitle')}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {t('settings.dataSummary')}
+                </Typography>
+              </Box>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: 2,
+                  p: 2,
+                  borderRadius: 3,
+                  backgroundColor: 'var(--mui-palette-action-hover)',
+                }}
+              >
+                <Stat label={t('settings.events')} value={summary?.eventCount ?? '—'} />
+                <Stat label={t('settings.domains')} value={summary?.domainCount ?? '—'} />
+                <Stat label={t('settings.feedback')} value={summary?.feedbackCount ?? '—'} />
+                <Stat
+                  label={t('settings.firstEvent')}
+                  value={formatDate(summary?.firstEventAt ?? null)}
+                />
+                <Stat
+                  label={t('settings.cleanupTraining')}
+                  value={`${summary?.cleanupTrainedSamples ?? 0} / ${summary?.cleanupPositiveSamples ?? 0}`}
+                />
+                <Stat
+                  label={t('settings.recommendTraining')}
+                  value={`${summary?.recommendTrainedSamples ?? 0} / ${summary?.recommendPositiveSamples ?? 0}`}
+                />
+              </Box>
             </Stack>
-            <Typography variant="caption" color="text.secondary">
-              {t('settings.privacyHint')}
-            </Typography>
+
+            {/* ── Import & export ───────────────────────────────────── */}
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {t('settings.importExportTitle')}
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Tooltip title={t('settings.historyBootstrapTooltip')}>
+                  <span>
+                    <Button
+                      onClick={onSeedHistory}
+                      startIcon={<HistoryIcon />}
+                      disabled={busy}
+                      variant="outlined"
+                    >
+                      {t('settings.historyBootstrap')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title={t('settings.exportTooltip')}>
+                  <span>
+                    <Button
+                      onClick={onExport}
+                      startIcon={<DownloadIcon />}
+                      disabled={busy}
+                      variant="outlined"
+                    >
+                      {t('settings.export')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title={t('settings.migrationExportTooltip')}>
+                  <span>
+                    <Button
+                      onClick={onExportMigration}
+                      startIcon={<LuggageIcon />}
+                      disabled={busy}
+                      variant="outlined"
+                    >
+                      {t('settings.migrationExport')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title={t('settings.debugExportTooltip')}>
+                  <span>
+                    <Button
+                      onClick={onExportDebug}
+                      startIcon={<BugReportIcon />}
+                      disabled={busy}
+                      variant="outlined"
+                    >
+                      {t('settings.debugExport')}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Stack>
+            </Stack>
+
+            {/* ── Reset (danger zone) ───────────────────────────────── */}
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                {t('settings.dangerZoneTitle')}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {t('settings.privacyHint')}
+              </Typography>
+              <Box>
+                {confirmingWipe ? (
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      onClick={onWipe}
+                      startIcon={<DeleteForeverIcon />}
+                      disabled={busy}
+                      variant="contained"
+                      color="error"
+                    >
+                      {t('settings.wipeConfirm')}
+                    </Button>
+                    <Button onClick={() => setConfirmingWipe(false)} disabled={busy}>
+                      {t('settings.cancel')}
+                    </Button>
+                  </Stack>
+                ) : (
+                  <Button
+                    onClick={() => setConfirmingWipe(true)}
+                    startIcon={<RestartAltIcon />}
+                    variant="outlined"
+                    color="error"
+                    disabled={busy}
+                  >
+                    {t('settings.wipe')}
+                  </Button>
+                )}
+              </Box>
+            </Stack>
           </Stack>
         )}
 

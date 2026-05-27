@@ -7,6 +7,7 @@ import {
   logUiEvent,
   reportOpenFeedback,
 } from '../api/recommendations';
+import { isOracleHintEnabled } from '../hooks/useOracleHintPref';
 
 // "Augur predicts" — Dynamic-Island-style capsule. Shows at the top of the
 // new-tab page only when the recommendation model is genuinely confident
@@ -21,14 +22,52 @@ import {
 // Default selection is the centre (most-likely) slot.
 
 // Calibrated probability the top candidate must hit before the capsule
-// shows. 0.55 was too strict given the recommend head's empirical class
-// rate (~17% positive weighted), which after Platt calibration puts
-// strong-but-not-certain candidates in the 0.45–0.65 range. 0.45 hits
-// "model genuinely thinks this is more likely than not" without firing
-// for noise. The smart-cleanup auto-select stays at 0.60 — closing tabs
-// is more destructive than opening them, so it warrants stricter gating.
+// shows. 0.45 hits "model genuinely thinks this is more likely than not"
+// without firing for noise. Smart-cleanup auto-select stays at 0.60 —
+// closing tabs is more destructive than opening them.
 const CONFIDENCE_THRESHOLD = 0.45;
-const AUTO_DISMISS_MS = 3_000;
+// 5s gives a busy user time to actually read + react; analytics from 3s
+// showed most dismissals were auto-expirations, not deliberate Esc presses.
+const AUTO_DISMISS_MS = 5_000;
+// Don't re-show if the top candidate URL is one we recently surfaced and
+// the user dismissed/ignored — gives users a break from a stuck model
+// repeatedly nominating the same wrong pick across consecutive new tabs.
+const REPEAT_SUPPRESS_MS = 15 * 60 * 1000;
+const REPEAT_SUPPRESS_KEY = 'augur:oracleRecentlyShown';
+
+type RecentEntry = { url: string; ts: number };
+
+function readRecent(): RecentEntry[] {
+  try {
+    const raw = localStorage.getItem(REPEAT_SUPPRESS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const cutoff = Date.now() - REPEAT_SUPPRESS_MS;
+    return parsed.filter(
+      (e): e is RecentEntry =>
+        e && typeof e.url === 'string' && typeof e.ts === 'number' && e.ts >= cutoff,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function rememberShown(url: string, accepted: boolean): void {
+  // Only suppress if the user did NOT accept — accepted picks should be
+  // free to reappear (user clearly liked them).
+  if (accepted) return;
+  try {
+    const current = readRecent().filter((e) => e.url !== url);
+    current.push({ url, ts: Date.now() });
+    localStorage.setItem(
+      REPEAT_SUPPRESS_KEY,
+      JSON.stringify(current.slice(-20)), // cap to avoid unbounded growth
+    );
+  } catch {
+    // ignore
+  }
+}
 
 function favicon(url: string): string {
   try {
@@ -48,39 +87,60 @@ export function OracleHint() {
   const [closing, setClosing] = useState(false);
   const capsuleRef = useRef<HTMLDivElement | null>(null);
 
+  // Tracks how the capsule was dismissed for analytics. Default 'auto'
+  // (3-second timeout); flipped to 'manual' if user presses Esc / clicks
+  // outside. Used in logUiEvent meta so future tuning can separate "user
+  // actively rejected" from "user didn't react in time".
+  const dismissReasonRef = useRef<'auto' | 'manual'>('auto');
+
   // Fetch once on mount — each new tab is a fresh dashboard, so this fires
   // exactly when we want it (right after the user opens the page).
   useEffect(() => {
+    if (!isOracleHintEnabled()) return;
     let cancelled = false;
     void fetchOpenRecommendations().then((items) => {
       if (cancelled) return;
-      if (items.length >= 3 && items[0].score >= CONFIDENCE_THRESHOLD) {
-        setCandidates(items.slice(0, 3));
-        setSelectedSlot(1);
-        setVisible(true);
-        logUiEvent({
-          type: 'oracle_shown',
-          domains: items.slice(0, 3).map((c) => c.domain),
-          meta: {
-            scores: items.slice(0, 3).map((c) => c.score),
-            reasons: items.slice(0, 3).map((c) => c.reason),
-          },
-        });
+      if (items.length < 3 || items[0].score < CONFIDENCE_THRESHOLD) return;
+      // Suppression check — if we recently showed (and the user didn't
+      // accept) this same top URL, don't show again. Prevents the
+      // "stuck top pick" failure mode from spamming the user.
+      const recentUrls = new Set(readRecent().map((e) => e.url));
+      if (recentUrls.has(items[0].url)) {
+        return;
       }
+      setCandidates(items.slice(0, 3));
+      setSelectedSlot(1);
+      setVisible(true);
+      logUiEvent({
+        type: 'oracle_shown',
+        domains: items.slice(0, 3).map((c) => c.domain),
+        meta: {
+          scores: items.slice(0, 3).map((c) => c.score),
+          reasons: items.slice(0, 3).map((c) => c.reason),
+        },
+      });
     });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const dismiss = () => {
+  const dismiss = (reason: 'auto' | 'manual' = 'auto') => {
     setClosing(true);
-    logUiEvent({ type: 'oracle_dismissed' });
+    dismissReasonRef.current = reason;
+    const topUrl = candidates?.[0]?.url;
+    if (topUrl) rememberShown(topUrl, /*accepted=*/ false);
+    logUiEvent({
+      type: 'oracle_dismissed',
+      meta: { reason },
+    });
     window.setTimeout(() => setVisible(false), 220);
   };
 
   const open = (c: OpenCandidate) => {
     void reportOpenFeedback(c.domain, c.features, 'accepted');
+    // Accepted picks are NOT remembered for suppression — they should be
+    // free to reappear next time.
     logUiEvent({
       type: 'oracle_accepted',
       domain: c.domain,
@@ -115,7 +175,7 @@ export function OracleHint() {
       (node as any).__r2 = r2;
     });
 
-    const timer = window.setTimeout(dismiss, AUTO_DISMISS_MS);
+    const timer = window.setTimeout(() => dismiss('auto'), AUTO_DISMISS_MS);
 
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement | null;
@@ -138,7 +198,7 @@ export function OracleHint() {
         if (c) open(c);
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        dismiss();
+        dismiss('manual');
       }
     };
 

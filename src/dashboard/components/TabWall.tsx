@@ -319,6 +319,42 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     void runSmartCleanup(false);
   }, [tabs.length, runSmartCleanup]);
 
+  // Ghost-tab purge: when a tab disappears from `tabs` (closed via Cmd+W,
+  // closed in another window, etc.) but is still in `aiSelected` or
+  // `selected`, drop it from both sets WITHOUT logging feedback. Otherwise
+  // a subsequent batch-commit would attribute the close to the AI's
+  // suggestion (logging an 'accepted' for a tab the user closed for
+  // unrelated reasons) and corrupt the training signal.
+  useEffect(() => {
+    const liveIds = new Set(
+      tabs.map((tb) => tb.id).filter((x): x is number => x !== undefined),
+    );
+    setAiSelected((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of prev.keys()) {
+        if (!liveIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (!liveIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [tabs]);
+
   // Auto-run #2: every time the dashboard becomes visible (user switches
   // back to this tab). Skipped when:
   //   - the user is mid-batch (selected or AI batch still active), or
