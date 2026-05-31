@@ -81,7 +81,6 @@ Declared in [`src/manifest.ts`](../src/manifest.ts):
 | `history` | Read browser history | One-time bootstrap on install (`chrome.history.search` + `getVisits`) |
 | `topSites` | Read top sites list | Cold-start fallback in suggestions |
 | `sessions` | Read recently closed sessions | Reserved for future "restore recent" UX (not yet wired up) |
-| `bookmarks` | Read bookmarks | Reserved for future bookmark-aware suggestions (not yet wired up) |
 | `storage` | Use `chrome.storage.session` / `local` | Runtime state, AI chat sync |
 | `alarms` | Schedule periodic tasks | Heartbeat, decay, embedding retrain |
 | `idle` | Detect idle state | Pause focus accounting; `isIdle` cleanup feature |

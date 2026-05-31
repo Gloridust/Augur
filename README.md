@@ -222,7 +222,7 @@ Augur is local-first with one shadow on its conscience: it currently fetches fav
 
 - **No telemetry, no analytics, no error reporting.** · 无埋点、无遥测、无错误上报。
 - **No cloud sync.** Events, model weights, bandit posteriors, embeddings, stash, workspaces, and pins all live in IndexedDB (`augur` database). Dexie schema is **purely additive** — extension updates never drop or migrate destructive data. · 无云同步，全部在 `augur` IndexedDB 数据库里。Dexie schema **纯追加式**——扩展更新永远不会破坏性迁移数据。
-- **No host permissions.** The manifest declares `tabs`, `tabGroups`, `history`, `topSites`, `sessions`, `bookmarks`, `storage`, `alarms`, `idle` — and nothing else. The install dialog is short and reads like a normal productivity extension. · 无 host 权限，安装弹窗短小，看着就是普通生产力扩展。
+- **No host permissions.** The manifest declares `tabs`, `tabGroups`, `history`, `topSites`, `sessions`, `storage`, `alarms`, `idle` — and nothing else. The install dialog is short and reads like a normal productivity extension. · 无 host 权限，安装弹窗短小，看着就是普通生产力扩展。
 - **Wipe at any time.** Settings → Data → Wipe — clears every table, resets onboarding, deletes localStorage prefs. · 随时清除，设置 → 数据 → 清除，重置一切。
 
 ### First-install bootstrap from browser history · 首装从浏览器历史种子
@@ -321,24 +321,29 @@ Settings → Advanced has: · 设置 → 高级里有：
 
 ## Releasing · 发布
 
+Augur has **two distinct package commands** for different audiences. Pick the right one or your upload will be rejected. · Augur 有**两个不同的打包命令**，适用于不同场景。用错商店会拒收。
+
+| Command | Output | For | Dev `key` allowed? |
+|---|---|---|---|
+| `npm run package` | `augur-<version>.zip` | Local install · 本地安装 | ✓ |
+| `npm run release` | `augur-v<version>-cws.zip` | Chrome Web Store submission · 上架商店 | ✗ (enforced · 强制检查) |
+
 ```bash
-# 1) Bump versions in package.json AND src/manifest.ts (must match) · 同步升版本
-# 2) Build + zip                                                      · 构建打包
-npm run package
-# 3) Smoke-test the artifact                                          · 烟测产物
-#    chrome://extensions → Load unpacked → dist/
-# 4) Upload to Chrome Web Store                                       · 上传应用商店
-#    https://chrome.google.com/webstore/devconsole
+# Local / private distribution · 本地分发
+npm run package          # → augur-<version>.zip
+
+# Chrome Web Store submission · 商店上架
+npm run release          # → augur-v<version>-cws.zip with pre-flight checks
 ```
 
-`npm run package` is idempotent — it runs `prebuild` (icon regen) → `tsc` → `vite build` → `zip dist/`. The zip excludes source maps and Vite's internal manifest. · `npm run package` 幂等：prebuild → tsc → vite build → zip dist。
+**`npm run release` runs strict pre-flight checks before building** (no developer `key` in manifest, version match between `package.json` and `src/manifest.ts`, all four icon sizes present, no stray source maps / .DS_Store / .vite artifacts, service worker built). Aborts if any check fails — so you can't accidentally ship a broken zip to CWS. · `npm run release` 在打包前做严格预检查：manifest 里不能有开发者 `key`、版本号必须对齐、四个尺寸的 icon 都在、不能混进 source map 和 .DS_Store、SW 必须构建成功——任一不过就直接 abort，杜绝把坏 zip 误传到商店。
 
-### Web Store materials · 商店素材
-
-- Privacy policy URL — short, since Augur makes zero outbound calls except favicons. · 隐私政策（写一段就够，因为零网络）。
-- 5 screenshots @ 1280×800 covering: dashboard, suggestions, cleanup card, workspaces, insights heatmap. · 5 张截图 1280×800：仪表板、推荐、清理、工作区、热力图。
-- Small (440×280) and large (920×680) marquee tiles. · 商店瓦片图。
-- Description (en + zh_CN). · 应用简介（中英）。
+**Full Chrome Web Store walkthrough** in [`doc/RELEASE.md`](doc/RELEASE.md), covering:
+- Pre-release checklist (version bump, key removal, smoke test) · 发布前检查清单
+- Permission justifications (paste-ready text for each of 8 declared permissions) · 8 项权限的提交文案（可直接粘贴）
+- Store listing copy (EN + 简中) · 商店描述文案
+- Screenshots / promotional tiles requirements · 截图与商店瓦片要求
+- Common rejection reasons and fixes · 常见拒收原因及修复
 
 ---
 

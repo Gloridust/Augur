@@ -27,7 +27,8 @@ To test the dashboard:
 | `npm run typecheck` | `tsc -b --noEmit` — strict TS check |
 | `npm run icons` | Regenerate 16/32/48/128 PNGs from `public/icons/icon.svg` |
 | `npm run build` | Production build to `dist/` |
-| `npm run package` | `build` + zip to `augur-<version>.zip` (also strips `dist/demo/`) |
+| `npm run package` | `build` + zip to `augur-<version>.zip` for **local / unpacked** distribution (developer key allowed) |
+| `npm run release` | Build a **Chrome Web Store-ready** zip `augur-v<version>-cws.zip` with strict pre-flight checks. See [`RELEASE.md`](RELEASE.md). |
 | `npm run extension-key` | Generate a stable RSA-2048 public key for manifest's `key` field — paste into `src/manifest.ts` to keep the dev extension ID stable across rebuilds |
 
 ### Stable dev extension ID
@@ -121,19 +122,28 @@ If you're touching the UI, also verify both light and dark modes (system theme s
 
 ## 10. Release flow
 
+There are two distinct flows depending on where the build is going:
+
+**Local / private distribution** (unpacked install, sending the zip to a friend, etc):
+
 ```bash
-# 1. Bump version in package.json AND src/manifest.ts (must match)
-# 2. Build + package
-npm run package
+# Bump version in package.json AND src/manifest.ts (must match)
+npm run package           # → augur-<version>.zip
 
-# 3. Smoke-test the artifact
-#    chrome://extensions → Load unpacked → dist/
-
-# 4. (Optional) Upload to Chrome Web Store
-#    https://chrome.google.com/webstore/devconsole
+# chrome://extensions → Load unpacked → dist/
 ```
 
-`npm run package` is idempotent — it runs `prebuild` (icons) → `tsc` → `vite build` → `zip dist/`. The zip excludes source maps, Vite's internal manifest, and `public/demo/` (see [`scripts/package.mjs`](../scripts/package.mjs)).
+The `package` zip allows the developer `key` (for stable extension ID across rebuilds).
+
+**Chrome Web Store submission**: see [`RELEASE.md`](RELEASE.md) for the full walkthrough — pre-flight checks, permission justifications, store listing copy, screenshots requirements, post-submission flow.
+
+```bash
+# After bumping version and confirming `key:` is commented out in src/manifest.ts:
+npm run release           # → augur-v<version>-cws.zip
+# Upload to https://chrome.google.com/webstore/devconsole
+```
+
+`npm run release` runs strict pre-flight checks (no `key` field, version match, no stray source maps, all icon sizes present) and aborts if anything's off. Subsequent uploads must have a higher version than the published one.
 
 ## 11. Commits and PRs
 

@@ -16,16 +16,22 @@ export default defineManifest({
     service_worker: 'src/background/index.ts',
     type: 'module',
   },
-  // Note: no `host_permissions` — `tabs` already gives us URL/title access for
-  // open tabs, and we never inject scripts. Keeping this list short keeps the
-  // install dialog from looking scary.
+  // Note: no `host_permissions` — `tabs` already gives us URL/title access
+  // for open tabs, and we never inject scripts. Keeping this list short
+  // keeps the install dialog from looking scary AND keeps CWS review fast
+  // (every additional permission needs a justification in the submission
+  // form).
+  //
+  // Each permission listed below is actively used by the codebase. If you
+  // add a permission here, add a corresponding justification block to
+  // doc/RELEASE.md §7 — CWS will ask, and reviewers reject unjustified
+  // permission requests.
   permissions: [
     'tabs',
     'tabGroups',
     'history',
     'topSites',
     'sessions',
-    'bookmarks',
     'storage',
     'alarms',
     'idle',

@@ -13,7 +13,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "package": "npm run build && node scripts/package.mjs"
+    "package": "npm run build && node scripts/package.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
