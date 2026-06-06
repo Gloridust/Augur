@@ -84,13 +84,33 @@ async function main() {
 
   // ── 3. Strip non-shipping artifacts ───────────────────────────────
   step('Stripping non-shipping artifacts');
-  const STRIPPABLE = ['demo', '.vite'];
-  for (const name of STRIPPABLE) {
+  const STRIPPABLE_DIRS = ['demo', '.vite'];
+  for (const name of STRIPPABLE_DIRS) {
     const path = resolve(distDir, name);
     if (existsSync(path)) {
       await rm(path, { recursive: true, force: true });
       console.log(`  removed dist/${name}/`);
     }
+  }
+  // Recursively strip macOS / OS metadata files that Finder regenerates
+  // on any browse of the dist folder. Doing it here (before pre-flight)
+  // means a stray .DS_Store doesn't block the release — it's not our bug,
+  // it's the OS's.
+  let osMetaStripped = 0;
+  for (const f of walkRel(distDir)) {
+    const base = f.split(/[/\\]/).pop();
+    if (base === '.DS_Store' || base === 'Thumbs.db') {
+      const abs = resolve(distDir, f);
+      try {
+        unlinkSync(abs);
+        osMetaStripped += 1;
+      } catch {
+        // best-effort
+      }
+    }
+  }
+  if (osMetaStripped > 0) {
+    console.log(`  removed ${osMetaStripped} OS metadata file(s) (.DS_Store / Thumbs.db)`);
   }
 
   // ── 4. Pre-flight check: no `key` in manifest ─────────────────────
