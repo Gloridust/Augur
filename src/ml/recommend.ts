@@ -16,6 +16,7 @@ import {
 import {
   RECOMMEND_FEATURE_NAMES,
   buildRecommendFeatures,
+  buildSessionVector,
   summarizeOpenReason,
   vectorFromRecommend,
 } from './features';
@@ -31,10 +32,34 @@ import {
 } from './persistence';
 import { DomainSequenceMemory } from './models/markov';
 import { RandomForest } from './models/randomforest';
+import { SkipGramEmbedding } from './models/embedding';
+import { TransitionModel } from './models/transition';
+import { TinyMLP } from './models/mlp';
+import {
+  hourActivityZFrom,
+  loadCircadian,
+  type CircadianState,
+} from './circadian';
+import {
+  loadUrlPrefixes,
+  topPrefixFrom,
+  type UrlPrefixState,
+} from './urlprefix';
+import {
+  loadDomainText,
+  sessionTextVec,
+  textSim,
+  vecOf,
+  type DomainTextState,
+} from './domaintext';
+import { textCosine } from './textembed';
+import { calibrateFrom, loadBlendCalib } from './blendcalib';
+import { loadMlp, loadTransition, saveTransition } from './persistence';
 import { clamp } from './math';
 
 const FEATURE_COUNT = RECOMMEND_FEATURE_NAMES.length;
 const CANDIDATE_POOL = 80;
+const POOL_CAP = 120; // ceiling after candidate-generator expansion (Phase 3.4)
 const MAX_SUGGESTIONS = 5;
 const COLD_START_FRECENCY_FLOOR = 5;
 
@@ -42,6 +67,40 @@ let cachedModel: OnlineLogReg | null = null;
 let cachedBandit: BetaBandit | null = null;
 let cachedSeq: DomainSequenceMemory | null = null;
 let cachedForest: RandomForest | null = null;
+let cachedTransition: TransitionModel | null = null;
+let cachedMlp: TinyMLP | null = null;
+// Phase 5 MLP is OFF by default — flipped via the debug panel after a
+// backtest confirms it helps. Read from KV once and cached.
+let mlpEnabled: boolean | null = null;
+
+async function getTransition(): Promise<TransitionModel> {
+  if (!cachedTransition) cachedTransition = await loadTransition();
+  return cachedTransition;
+}
+async function getMlp(): Promise<TinyMLP> {
+  if (!cachedMlp) cachedMlp = await loadMlp(FEATURE_COUNT);
+  return cachedMlp;
+}
+async function isMlpEnabled(): Promise<boolean> {
+  if (mlpEnabled === null) {
+    const row = await db.kv.get('mlpEnabled:v1');
+    mlpEnabled = row?.value === true;
+  }
+  return mlpEnabled;
+}
+export async function setMlpEnabled(on: boolean): Promise<void> {
+  mlpEnabled = on;
+  await db.kv.put({ key: 'mlpEnabled:v1', value: on, updatedAt: Date.now() });
+}
+
+export async function mlpStatus(): Promise<{ enabled: boolean; ready: boolean; trainedGroups: number }> {
+  const m = await getMlp();
+  return {
+    enabled: await isMlpEnabled(),
+    ready: m.isReady(FEATURE_COUNT),
+    trainedGroups: m.state.trainedGroups,
+  };
+}
 
 async function getModel(): Promise<OnlineLogReg> {
   if (!cachedModel) cachedModel = await loadRecommendModel(FEATURE_COUNT);
@@ -147,6 +206,64 @@ export interface RecommendCallContext extends RecommendationContext {
   // for candidate-pool augmentation. Caller (background SW) builds this from
   // chrome.storage.session.
   focusHistory?: string[];
+  // Timestamp the current browsing session started (first event after a
+  // >30-min gap). Drives minutesIntoSession / isSessionStart (Phase 3.2).
+  sessionStartTs?: number;
+}
+
+// Shared per-call context so the v8 features that don't vary by candidate
+// (session vector, circadian snapshot, prefix table) are computed ONCE per
+// scoring pass and read O(1) per candidate — respecting the perf budget.
+interface ScoringContext {
+  embedding: SkipGramEmbedding;
+  bandit: BetaBandit;
+  seq: DomainSequenceMemory;
+  circadian: CircadianState;
+  prefixes: UrlPrefixState;
+  transition: TransitionModel;
+  domainText: DomainTextState;
+  sessionVec: Float64Array | null;
+  sessionCohesion: number;
+  sessionTextVec: Float32Array | null;
+  focusHistory: string[];
+  focusedDomain?: string;
+  hour: number;
+  dow: number;
+  openDomains: string[];
+  now: number;
+  minutesIntoSession: number;
+  isSessionStart: number;
+}
+
+// Compute the per-candidate v8 feature inputs from a shared scoring context.
+// All O(1) against in-memory structures.
+function v8FeatureInputs(ctx: ScoringContext, domain: string) {
+  return {
+    transitionAffinity: ctx.focusedDomain
+      ? ctx.embedding.directedScore(ctx.focusedDomain, domain)
+      : 0,
+    sessionSim: ctx.sessionVec
+      ? ctx.embedding.cosineToVector(domain, ctx.sessionVec)
+      : 0,
+    sessionCohesion: ctx.sessionCohesion,
+    minutesIntoSession: ctx.minutesIntoSession,
+    isSessionStart: ctx.isSessionStart,
+    hourActivityZ: hourActivityZFrom(ctx.circadian, ctx.hour),
+    banditLogit: ctx.bandit.logit(domain),
+    prefixConcentration: topPrefixFrom(ctx.prefixes, domain).concentration,
+    titleSimToFocused: ctx.focusedDomain
+      ? textSim(ctx.domainText, domain, ctx.focusedDomain)
+      : 0,
+    titleSimToSession: ctx.sessionTextVec
+      ? (() => {
+          const v = vecOf(ctx.domainText, domain);
+          return v ? textCosine(v, ctx.sessionTextVec!) : 0;
+        })()
+      : 0,
+    factorizedTransition: ctx.focusedDomain
+      ? ctx.transition.score(ctx.focusedDomain, domain)
+      : 0.5,
+  };
 }
 
 export async function recommendOpen(
@@ -157,19 +274,34 @@ export async function recommendOpen(
 }
 
 // Full scoring path, shared by the live recommender and the offline
-// evaluator. `deterministic: true` replaces Thompson sampling with the
-// bandit's posterior mean — same expected ranking, zero randomness, so
-// repeated evaluation runs are comparable.
+// evaluator. `deterministic: true` disables exploration jitter so repeated
+// evaluation runs are comparable. `modelOverride` lets the backtest
+// evaluator score with a freshly-trained-on-a-split model instead of the
+// live one.
 export async function scoreOpenCandidates(
   context: RecommendCallContext,
-  opts: { deterministic?: boolean; now?: number } = {},
+  opts: {
+    deterministic?: boolean;
+    now?: number;
+    modelOverride?: OnlineLogReg;
+    forestOverride?: RandomForest | null;
+  } = {},
 ): Promise<OpenCandidate[]> {
-  const model = await getModel();
+  const model = opts.modelOverride ?? (await getModel());
   const bandit = await getBandit();
   const embedding = await getEmbedding();
   const seq = await getSequenceMemory();
-  const forest = await getForest();
-  const forestReady = forest.isReady(FEATURE_COUNT);
+  const circadian = await loadCircadian();
+  const prefixes = await loadUrlPrefixes();
+  const transition = await getTransition();
+  const domainText = await loadDomainText();
+  const blendCalib = await loadBlendCalib();
+  const forest =
+    opts.forestOverride !== undefined ? opts.forestOverride : await getForest();
+  const forestReady = !!forest && forest.isReady(FEATURE_COUNT);
+  // Phase 5 MLP ensemble — only when the user has enabled it AND it's warm.
+  const mlp = opts.modelOverride ? null : await getMlp();
+  const useMlp = !opts.modelOverride && (await isMlpEnabled()) && !!mlp && mlp.isReady(FEATURE_COUNT);
 
   let pool = await getTopDomainsByFrecency(CANDIDATE_POOL);
   let isColdStart = false;
@@ -185,98 +317,142 @@ export async function scoreOpenCandidates(
     }
   }
 
-  // ── Candidate-pool augmentation via sequence memory ───────────────
-  // The frecency pool is "what you visit a lot, ever". Sequence memory
-  // adds "what you tend to open RIGHT NOW given recent focus + hour".
-  // Without this step, the right next-domain often isn't even in the
-  // candidate list — and no scoring fix can recover that.
+  const now = opts.now ?? Date.now();
   const focusHistory = context.focusHistory ?? [];
-  const seqTop = seq.topPredictions(focusHistory, context.hour, Date.now(), 20);
+  const focusedDomain = context.focusedDomain;
+
+  // ── Session vector (computed ONCE, read O(1) per candidate) ───────
+  const session = buildSessionVector(focusHistory, embedding, embedding.dim);
+
+  // ── Candidate-pool augmentation (Phase 3.4) ───────────────────────
+  // Frecency = "what you visit a lot, ever". We add what you tend to open
+  // RIGHT NOW: (a) sequence-memory top transitions, (b) embedding neighbors
+  // of the focused domain, (c) embedding neighbors of the session centroid.
+  // All in-memory; capped at POOL_CAP to bound scoring cost. Without this,
+  // the right next-domain is often not even in the list (measured by the
+  // evaluator's recall@pool).
   const poolDomains = new Set(pool.map((p) => p.domain));
-  for (const { domain } of seqTop) {
-    if (poolDomains.has(domain)) continue;
-    if (!domain || domain.startsWith('chrome')) continue;
-    const stat = (await getDomainStats(domain)) ?? {
-      domain,
-      visitCount: 0,
-      visitsDecay: 0,
-      totalFocusMs: 0,
-      avgFocusMs: 0,
-      closeWithoutFocusCount: 0,
-      closeQuickCount: 0,
-      hourDist: new Array(24).fill(0),
-      dowDist: new Array(7).fill(0),
-      lastVisit: 0,
-      updatedAt: 0,
-    };
-    pool.push(stat);
+  const blankStat = (domain: string): DomainStats => ({
+    domain,
+    visitCount: 0,
+    visitsDecay: 0,
+    totalFocusMs: 0,
+    avgFocusMs: 0,
+    closeWithoutFocusCount: 0,
+    closeQuickCount: 0,
+    hourDist: new Array(24).fill(0),
+    dowDist: new Array(7).fill(0),
+    lastVisit: 0,
+    updatedAt: 0,
+  });
+  const tryAdd = async (domain: string) => {
+    if (!domain || poolDomains.has(domain) || domain.startsWith('chrome')) return;
+    if (pool.length >= POOL_CAP) return;
+    pool.push((await getDomainStats(domain)) ?? blankStat(domain));
     poolDomains.add(domain);
+  };
+  for (const { domain } of seq.topPredictions(focusHistory, context.hour, now, 20)) {
+    await tryAdd(domain);
+  }
+  if (focusedDomain) {
+    for (const { domain } of embedding.topNeighbors(focusedDomain, 8)) await tryAdd(domain);
+    // Factorized transition model's top next-domains (Phase 2.3) — generalizes
+    // beyond observed (from→to) pairs, directly improving recall@pool.
+    for (const domain of transition.topNext(focusedDomain, 8, poolDomains)) await tryAdd(domain);
+  }
+  if (session.vec) {
+    for (const domain of embedding.nearestToVector(session.vec, 8, poolDomains)) {
+      await tryAdd(domain);
+    }
   }
 
   const openSet = new Set(context.openDomains);
   const pinnedSet = new Set(context.pinnedDomains ?? []);
-  const now = opts.now ?? Date.now();
+
+  // Session-position (Phase 3.2).
+  const sessionStartTs = context.sessionStartTs ?? now;
+  const minutesIntoSession = clamp((now - sessionStartTs) / 60_000, 0, 120);
+  const isSessionStart = now - sessionStartTs < 60_000 ? 1 : 0;
+
+  // Shared scoring context for the O(1) v8 feature reads.
+  const sctx: ScoringContext = {
+    embedding,
+    bandit,
+    seq,
+    circadian,
+    prefixes,
+    transition,
+    domainText,
+    sessionVec: session.vec,
+    sessionCohesion: session.cohesion,
+    sessionTextVec: sessionTextVec(domainText, focusHistory.slice(-8)),
+    focusHistory,
+    focusedDomain,
+    hour: context.hour,
+    dow: context.dow,
+    openDomains: context.openDomains,
+    now,
+    minutesIntoSession,
+    isSessionStart,
+  };
 
   // One bulk events load answers visit-velocity, session-context, AND
-  // last-seen-url/title for every candidate. The previous per-candidate
-  // pattern cost ~3 IndexedDB range queries × pool size (≈240 queries per
-  // new-tab open); this is 1 query + in-memory maps.
+  // last-seen-url/title for every candidate (1 query + in-memory maps).
   const snapshot = await buildTimeseriesSnapshot(now);
 
   const candidates: OpenCandidate[] = [];
   for (let i = 0; i < pool.length; i++) {
     const stat = pool[i];
     if (!stat.domain || stat.domain.startsWith('chrome')) continue;
-    const embedSim = context.focusedDomain
-      ? embedding.cosine(stat.domain, context.focusedDomain)
+    const embedSim = focusedDomain
+      ? embedding.cosine(stat.domain, focusedDomain)
       : 0;
-    const vel = snapshot.velocityOf(stat.domain);
-    const sess = snapshot.sessionOf(stat.domain);
-    // Three sequence-memory probabilities — short / long / time-of-day.
-    // The LR head learns the optimal mix per user.
-    const seqProbShort = seq.predictShort(focusHistory, stat.domain, now);
-    const seqProbLong = seq.predictLong(focusHistory, stat.domain, embedding);
-    const seqProbTime = seq.predictTime(focusHistory, stat.domain, context.hour);
     const features = await buildRecommendFeatures({
       domain: stat.domain,
       context,
       isCurrentlyOpen: openSet.has(stat.domain),
       isPinnedSomewhere: pinnedSet.has(stat.domain),
       embedSimToFocused: embedSim,
-      visitVelocity: vel,
-      sessionContext: sess,
-      seqProbShort,
-      seqProbLong,
-      seqProbTime,
+      visitVelocity: snapshot.velocityOf(stat.domain),
+      sessionContext: snapshot.sessionOf(stat.domain),
+      seqProbShort: seq.predictShort(focusHistory, stat.domain, now),
+      seqProbLong: seq.predictLong(focusHistory, stat.domain, embedding),
+      seqProbTime: seq.predictTime(focusHistory, stat.domain, context.hour),
+      ...v8FeatureInputs(sctx, stat.domain),
       now,
     });
     if (features.isCurrentlyOpen) continue;
     const xVec = vectorFromRecommend(features);
     const lrScore = model.predict(xVec);
-    // Ensemble with the nightly-trained Random Forest if it's been trained
-    // and matches the current feature shape. RF captures non-linear feature
-    // interactions the linear LR can't. Equal weight for now — could be
-    // learned per-user later via a calibration pass.
-    const baseScore = forestReady
-      ? 0.5 * lrScore + 0.5 * forest.predict(xVec)
-      : lrScore;
-    // Live path: Thompson sampling for exploration. Evaluator path:
-    // posterior mean, so runs are deterministic and comparable.
-    const banditMul = opts.deterministic
-      ? bandit.meanAccept(banditArmId(stat.domain))
-      : bandit.sample(banditArmId(stat.domain));
-    let score = baseScore * (0.5 + banditMul);
-    // During cold start the model and the bandit are both basically uniform,
-    // so blend in topSites' own popularity order to give a sensible default.
+    // Ensemble: LR + RF (+ optional MLP). The bandit is now a LEARNED
+    // feature (banditLogit) inside the models — no hard-coded multiplier.
+    let score: number;
+    if (useMlp && forestReady) {
+      score = 0.4 * lrScore + 0.35 * forest!.predict(xVec) + 0.25 * mlp!.predict(xVec);
+    } else if (forestReady) {
+      score = 0.5 * lrScore + 0.5 * forest!.predict(xVec);
+    } else {
+      score = lrScore;
+    }
+    // Phase 4.2: calibrate the blended score against realized outcomes so
+    // the OracleHint threshold compares a genuine probability. Monotonic —
+    // ranking is unchanged.
+    if (!opts.modelOverride) score = calibrateFrom(blendCalib, score);
+    // Exploration: small additive jitter on the live path, decaying as the
+    // arm accumulates impressions. Deterministic (eval) path: none.
+    if (!opts.deterministic) {
+      const eps = 0.08 / (1 + sctx.bandit.impressionsOf(stat.domain) / 10);
+      score += eps * (Math.random() - 0.5);
+    }
     if (isColdStart) {
       const positionBoost = 1 - i / Math.max(pool.length, 1);
       score = score * 0.4 + positionBoost * 0.6;
     }
-    // Last-seen lookup from the snapshot covers any domain active in the
-    // last 14 days; fall back to the indexed per-domain query only for
-    // long-dormant domains that the frecency pool still surfaces.
+    // URL surfacing (Phase 4.3): prefer the domain's top URL prefix (a
+    // precise, actionable page) over the bare last-seen URL.
+    const prefHit = topPrefixFrom(prefixes, stat.domain);
     const last = snapshot.lastSeenOf(stat.domain) ?? (await lastEventForDomain(stat.domain));
-    const url = last.url ?? `https://${stat.domain}`;
+    const url = prefHit.url ?? last.url ?? `https://${stat.domain}`;
     const title = last.title ?? fallbackTitle(url, stat.domain);
     const reason = isColdStart && features.freqDecay <= 0.5
       ? 'popular'
@@ -350,19 +526,49 @@ export async function trainImplicitOpen(
     focusHistory?: string[];
     focusedDomain?: string;
     openDomains?: string[];
+    // Domains focused/opened in the past 15 min (Phase 1.1 switch filter).
+    recentlyFocusedDomains?: string[];
+    sessionStartTs?: number;
+    // Phase 1.3/1.4 sample weight (engagement × openedFrom), default 1.
+    sampleWeight?: number;
+    // Backtest evaluator trains a fresh model on a time split — when set,
+    // train INTO this model and do NOT persist (the live model is untouched).
+    modelOverride?: OnlineLogReg;
   },
 ): Promise<void> {
   if (!event.domain) return;
   if (event.type !== 'open' && event.type !== 'navigate') return;
-  const model = await getModel();
-  const embedding = await getEmbedding();
-  const seq = await getSequenceMemory();
 
   const focusHistory = ctx?.focusHistory ?? [];
   const focusedDomain = ctx?.focusedDomain;
   const openDomains = ctx?.openDomains ?? [];
+
+  // ── Phase 1.1: switch-event filter ────────────────────────────────
+  // The product predicts SWITCHES (new-intent opens), and both the
+  // evaluator and the live recommender skip self-transitions. Training on
+  // same-domain continuation browsing trains a different question than we
+  // ask. Skip when the opened domain is the one already focused, or was
+  // focused/opened within the past 15 min.
+  if (event.domain === focusedDomain) return;
+  if (ctx?.recentlyFocusedDomains?.includes(event.domain)) return;
+
+  const model = ctx?.modelOverride ?? (await getModel());
+  const embedding = await getEmbedding();
+  const seq = await getSequenceMemory();
+  const bandit = await getBandit();
+  const circadian = await loadCircadian();
+  const prefixes = await loadUrlPrefixes();
+  const transition = await getTransition();
+  const domainText = await loadDomainText();
   const hour = event.hourOfDay ?? new Date(event.ts).getHours();
   const dow = event.dayOfWeek ?? new Date(event.ts).getDay();
+
+  // Session context shared by all group members (computed once).
+  const session = buildSessionVector(focusHistory, embedding, embedding.dim);
+  const sessTextVec = sessionTextVec(domainText, focusHistory.slice(-8));
+  const sessionStartTs = ctx?.sessionStartTs ?? event.ts;
+  const minutesIntoSession = clamp((event.ts - sessionStartTs) / 60_000, 0, 120);
+  const isSessionStart = event.ts - sessionStartTs < 60_000 ? 1 : 0;
 
   const buildFor = async (domain: string, isCurrentlyOpen: boolean) => {
     const embedSim = focusedDomain ? embedding.cosine(domain, focusedDomain) : 0;
@@ -370,104 +576,98 @@ export async function trainImplicitOpen(
       visitVelocity(domain, event.ts),
       sessionContextFeature(domain, event.ts),
     ]);
-    const seqShort = seq.predictShort(focusHistory, domain, event.ts);
-    const seqLong = seq.predictLong(focusHistory, domain, embedding);
-    const seqTime = seq.predictTime(focusHistory, domain, hour);
+    const dtVec = vecOf(domainText, domain);
     return buildRecommendFeatures({
       domain,
-      context: {
-        hour,
-        dow,
-        focusedDomain,
-        openDomains,
-      },
+      context: { hour, dow, focusedDomain, openDomains },
       isCurrentlyOpen,
       isPinnedSomewhere: false,
       embedSimToFocused: embedSim,
       visitVelocity: vel,
       sessionContext: sess,
-      seqProbShort: seqShort,
-      seqProbLong: seqLong,
-      seqProbTime: seqTime,
+      seqProbShort: seq.predictShort(focusHistory, domain, event.ts),
+      seqProbLong: seq.predictLong(focusHistory, domain, embedding),
+      seqProbTime: seq.predictTime(focusHistory, domain, hour),
+      // v8 features at train time — must mirror the scoring path exactly.
+      transitionAffinity: focusedDomain ? embedding.directedScore(focusedDomain, domain) : 0,
+      sessionSim: session.vec ? embedding.cosineToVector(domain, session.vec) : 0,
+      sessionCohesion: session.cohesion,
+      minutesIntoSession,
+      isSessionStart,
+      hourActivityZ: hourActivityZFrom(circadian, hour),
+      banditLogit: bandit.logit(domain),
+      prefixConcentration: topPrefixFrom(prefixes, domain).concentration,
+      titleSimToFocused: focusedDomain ? textSim(domainText, domain, focusedDomain) : 0,
+      titleSimToSession: sessTextVec && dtVec ? textCosine(dtVec, sessTextVec) : 0,
+      factorizedTransition: focusedDomain ? transition.score(focusedDomain, domain) : 0.5,
       now: event.ts,
     });
   };
 
-  // Class weights are balanced — total positive weight (1.0) ≈ total
-  // negative weight (5 × 0.2 = 1.0).
-  //
-  // ── Mixture negative sampling: 3 easy + 2 hard ─────────────────────
-  // History of this code path:
-  //   v5: negatives from top-frecency only → model learned "popular /
-  //       co-occurring = negative" (spurious shortcut), OracleHint top-1
-  //       was systematically wrong.
-  //   v6: negatives uniform over db.domains → fixed the shortcut, but
-  //       all negatives became "easy" (random domains share almost no
-  //       context features with the positive). Easy-only negatives teach
-  //       the model to separate plausible-vs-random — NOT to pick the
-  //       right one among several plausible candidates, which is the
-  //       actual product decision (the candidate pool is all-plausible).
-  //   Now: a mixture. Easy negatives (uniform) keep calibration honest
-  //       and block popularity shortcuts in both directions; hard
-  //       negatives (drawn from the sequence-memory's own top predictions
-  //       for this context, minus what was actually opened) share the
-  //       positive's context profile — high cooccurrence, high seqProb —
-  //       so the only signal separating them from the positive is the
-  //       fine-grained feature interplay. That's exactly the decision
-  //       boundary OracleHint needs.
-  //
-  // Also exclude the focused domain — it would otherwise be sampled as
-  // a negative (since user just navigated FROM it, not TO it), which is
-  // a noisy label.
+  // ── Mixture negative sampling: 3 easy + 2 hard (see git history) ──
   const EASY_NEG_COUNT = 3;
   const HARD_NEG_COUNT = 2;
-  const POS_WEIGHT = 1.0;
-  const NEG_WEIGHT = 0.2;
-
-  // Positive sample for the domain the user actually opened.
-  const posFeatures = await buildFor(event.domain, true);
-  model.update(vectorFromRecommend(posFeatures), 1, POS_WEIGHT);
 
   const exclude = new Set<string>([event.domain]);
   if (focusedDomain) exclude.add(focusedDomain);
 
-  // Hard negatives: the sequence model's best guesses for this context
-  // that the user did NOT open. These are the candidates the recommender
-  // itself would have surfaced — training against them directly sharpens
-  // the live ranking.
   const hardCandidates = seq
     .topPredictions(focusHistory, hour, event.ts, 10)
     .map((p) => p.domain)
     .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'))
     .slice(0, HARD_NEG_COUNT);
-  for (const domain of hardCandidates) {
-    exclude.add(domain); // don't re-sample as easy
-    const negFeatures = await buildFor(domain, openDomains.includes(domain));
-    model.update(vectorFromRecommend(negFeatures), 0, NEG_WEIGHT);
-  }
+  for (const d of hardCandidates) exclude.add(d);
 
-  // Easy negatives: uniform random over the entire domain population.
-  // Top up to keep total negative weight constant when the sequence
-  // memory is too young to supply hard negatives.
   const easyTarget = EASY_NEG_COUNT + (HARD_NEG_COUNT - hardCandidates.length);
   const allDomains = await db.domains.toArray();
-  const eligible = allDomains
+  const easyPool = allDomains
     .map((d) => d.domain)
     .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'));
-  if (eligible.length > 0) {
-    // Fisher-Yates partial shuffle for unbiased sampling without replacement.
-    const sampled: string[] = [];
-    const pool = eligible.slice();
-    const k = Math.min(easyTarget, pool.length);
+  const easySampled: string[] = [];
+  {
+    const arr = easyPool.slice();
+    const k = Math.min(easyTarget, arr.length);
     for (let i = 0; i < k; i++) {
-      const j = i + Math.floor(Math.random() * (pool.length - i));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-      sampled.push(pool[i]);
+      const j = i + Math.floor(Math.random() * (arr.length - i));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      easySampled.push(arr[i]);
     }
-    for (const domain of sampled) {
-      const negFeatures = await buildFor(domain, openDomains.includes(domain));
-      model.update(vectorFromRecommend(negFeatures), 0, NEG_WEIGHT);
-    }
+  }
+
+  // ── Phase 2.1: build the group and take one softmax-CE ranking step ─
+  // The positive's feature vector + all negatives' vectors form ONE group;
+  // updateGroup pushes the positive's probability up relative to the rest
+  // (learning-to-rank), instead of K independent binary updates.
+  const negDomains = [...hardCandidates, ...easySampled];
+  const group: Array<{ x: number[]; positive: boolean }> = [];
+  const posFeatures = await buildFor(event.domain, true);
+  group.push({ x: vectorFromRecommend(posFeatures), positive: true });
+  for (const d of negDomains) {
+    const negFeatures = await buildFor(d, openDomains.includes(d));
+    group.push({ x: vectorFromRecommend(negFeatures), positive: false });
+  }
+  model.updateGroup(group, ctx?.sampleWeight ?? 1);
+
+  // Backtest path trains only the LR override — leave the shared
+  // transition/MLP/persistence untouched.
+  if (ctx?.modelOverride) return;
+
+  // Phase 2.3: train the factorized transition model on the same
+  // (from→to, negatives) example.
+  if (focusedDomain) {
+    transition.observe(focusedDomain, event.domain, negDomains);
+    await saveTransition(transition);
+  }
+
+  // Phase 5: train the (off-by-default) MLP on the same group so it's warm
+  // and backtest-comparable whenever the user chooses to enable it.
+  try {
+    const mlp = await getMlp();
+    mlp.updateGroup(group, ctx?.sampleWeight ?? 1);
+    const { saveMlp } = await import('./persistence');
+    await saveMlp(mlp);
+  } catch {
+    // MLP training is best-effort; never block the LR path.
   }
 
   await saveRecommendModel(model);
@@ -507,4 +707,9 @@ export async function nudgeRecommendOnClose(args: {
 export function clearRecommendCaches(): void {
   cachedModel = null;
   cachedBandit = null;
+  cachedSeq = null;
+  cachedForest = null;
+  cachedTransition = null;
+  cachedMlp = null;
+  mlpEnabled = null;
 }

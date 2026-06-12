@@ -207,6 +207,112 @@ export class OnlineLogReg {
     }
   }
 
+  // ── Group-wise sampled softmax (Phase 2.1, learning-to-rank) ─────────
+  // The product decision is RANKING (pick the right candidate among a
+  // plausible pool), but pointwise `update()` optimizes independent binary
+  // cross-entropy. This optimizes the ordering directly: given a group of
+  // {1 positive + K negatives} that all share a context, softmax over their
+  // logits and push the positive's probability up relative to the rest.
+  //
+  // Gradient of softmax cross-entropy w.r.t. each logit z_i:
+  //   ∂L/∂z_pos = softmax_pos − 1     ∂L/∂z_neg = softmax_neg
+  // Accumulate the per-feature gradient across the group, then take ONE Adam
+  // step (same optimizer state as `update`). The Welford stats and the
+  // Platt calibrator are still fed per-sample with binary labels, so the
+  // calibrated probability the UI thresholds on stays meaningful while the
+  // ranking weights are trained by the softmax objective.
+  updateGroup(
+    group: Array<{ x: number[]; positive: boolean }>,
+    weight = 1,
+  ): void {
+    if (group.length < 2) {
+      // Degenerate group — fall back to pointwise so the sample isn't wasted.
+      if (group.length === 1) this.update(group[0].x, group[0].positive ? 1 : 0, weight);
+      return;
+    }
+    const n = group.length;
+    const dim = this.state.weights.length;
+
+    // Welford stats from every sample first (matches `update`).
+    for (const g of group) {
+      for (let i = 0; i < dim; i++) {
+        this.state.stats[i] = welfordPush(this.state.stats[i], g.x[i]);
+      }
+    }
+
+    // Standardize + logits for each member.
+    const S: number[][] = [];
+    const z: number[] = [];
+    for (const g of group) {
+      const s = this.standardize(g.x);
+      S.push(s);
+      let zi = this.state.bias;
+      for (let i = 0; i < dim; i++) zi += s[i] * this.state.weights[i];
+      z.push(zi);
+    }
+
+    // Softmax over the group's logits (numerically stable).
+    const maxZ = Math.max(...z);
+    let denom = 0;
+    const soft = z.map((zi) => {
+      const e = Math.exp(zi - maxZ);
+      denom += e;
+      return e;
+    });
+    for (let i = 0; i < n; i++) soft[i] /= denom;
+
+    // Accumulate per-feature gradient: Σ_i (∂L/∂z_i) · s_i  + l2 · w
+    const lr = this.state.lr;
+    const l2 = this.state.l2;
+    const l1 = this.state.l1;
+    const grad = new Array(dim).fill(0);
+    let gradBias = 0;
+    for (let i = 0; i < n; i++) {
+      const dZ = (soft[i] - (group[i].positive ? 1 : 0)) * weight;
+      gradBias += dZ;
+      const s = S[i];
+      for (let j = 0; j < dim; j++) grad[j] += dZ * s[j];
+    }
+    for (let j = 0; j < dim; j++) grad[j] += l2 * this.state.weights[j];
+
+    // One Adam step on the accumulated group gradient.
+    this.state.adamT += 1;
+    const t = this.state.adamT;
+    const bc1 = 1 - Math.pow(ADAM_BETA1, t);
+    const bc2 = 1 - Math.pow(ADAM_BETA2, t);
+    for (let j = 0; j < dim; j++) {
+      const gj = grad[j];
+      this.state.adamM[j] = ADAM_BETA1 * this.state.adamM[j] + (1 - ADAM_BETA1) * gj;
+      this.state.adamV[j] = ADAM_BETA2 * this.state.adamV[j] + (1 - ADAM_BETA2) * gj * gj;
+      const mHat = this.state.adamM[j] / bc1;
+      const vHat = this.state.adamV[j] / bc2;
+      const step = (lr * mHat) / (Math.sqrt(vHat) + ADAM_EPS);
+      this.state.weights[j] = softThreshold(this.state.weights[j] - step, lr * l1);
+    }
+    this.state.adamMBias = ADAM_BETA1 * this.state.adamMBias + (1 - ADAM_BETA1) * gradBias;
+    this.state.adamVBias = ADAM_BETA2 * this.state.adamVBias + (1 - ADAM_BETA2) * gradBias * gradBias;
+    this.state.bias -= (lr * this.state.adamMBias / bc1) / (Math.sqrt(this.state.adamVBias / bc2) + ADAM_EPS);
+
+    this.state.trainedSamples += group.length;
+    this.state.positiveSamples += group.filter((g) => g.positive).length;
+
+    // Keep the Platt calibrator honest: feed each member with its binary
+    // label using the POST-step logit, so predict()'s probability still
+    // matches the empirical accept rate even though ranking drives weights.
+    if (this.state.trainedSamples >= CALIB_WARMUP) {
+      for (let i = 0; i < n; i++) {
+        const s = S[i];
+        let z2 = this.state.bias;
+        for (let j = 0; j < dim; j++) z2 += s[j] * this.state.weights[j];
+        const calibP = sigmoid(this.state.calibA * z2 + this.state.calibB);
+        const calibErr = (calibP - (group[i].positive ? 1 : 0)) * weight;
+        this.state.calibA -= CALIB_LR * calibErr * z2;
+        this.state.calibB -= CALIB_LR * calibErr;
+        this.state.calibSamples += 1;
+      }
+    }
+  }
+
   // Initial (cold-start) bias toward the empirical positive rate.
   setPriorRate(rate: number): void {
     if (this.state.trainedSamples > 0) return;

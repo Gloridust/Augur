@@ -26,6 +26,11 @@ import { isOracleHintEnabled } from '../hooks/useOracleHintPref';
 // without firing for noise. Smart-cleanup auto-select stays at 0.60 —
 // closing tabs is more destructive than opening them.
 const CONFIDENCE_THRESHOLD = 0.45;
+// Margin gate (Phase 4.2): the top candidate must also beat the runner-up
+// by this much. Kills the "two near-identical candidates, model arbitrarily
+// confident in one" false-fire — if the model can't separate #1 from #2,
+// surfacing a single confident pick is misleading.
+const MARGIN_THRESHOLD = 0.08;
 // 5s gives a busy user time to actually read + react; analytics from 3s
 // showed most dismissals were auto-expirations, not deliberate Esc presses.
 const AUTO_DISMISS_MS = 5_000;
@@ -101,6 +106,8 @@ export function OracleHint() {
     void fetchOpenRecommendations().then((items) => {
       if (cancelled) return;
       if (items.length < 3 || items[0].score < CONFIDENCE_THRESHOLD) return;
+      // Margin gate — don't fire when #1 and #2 are too close to call.
+      if (items[0].score - items[1].score < MARGIN_THRESHOLD) return;
       // Suppression check — if we recently showed (and the user didn't
       // accept) this same top URL, don't show again. Prevents the
       // "stuck top pick" failure mode from spamming the user.

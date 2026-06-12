@@ -196,12 +196,43 @@ export class RandomForest {
   static fit(
     X: number[][],
     y: number[],
-    opts: { seed?: number } = {},
+    opts: { seed?: number; weights?: number[] } = {},
   ): RandomForest {
     if (X.length === 0 || X[0].length === 0) return new RandomForest();
     const featureCount = X[0].length;
     const rng = makeRng(opts.seed ?? 42);
     const trees: TreeNode[] = [];
+
+    // Sample weights (Phase 1.3/1.4) are incorporated via WEIGHTED bootstrap:
+    // a sample's draw probability is proportional to its weight, so a
+    // high-engagement / deliberate open appears more often in each tree's
+    // bag — the same effect as a weighted Gini, without touching the
+    // entropy/split internals. Build a cumulative table once for O(log n)
+    // weighted draws.
+    const weights = opts.weights;
+    let cum: number[] | null = null;
+    if (weights && weights.length === X.length) {
+      cum = new Array(X.length);
+      let running = 0;
+      for (let i = 0; i < X.length; i++) {
+        running += Math.max(0, weights[i]);
+        cum[i] = running;
+      }
+      if (running <= 0) cum = null; // degenerate — fall back to uniform
+    }
+    const drawIndex = (): number => {
+      if (!cum) return Math.floor(rng() * X.length);
+      const target = rng() * cum[cum.length - 1];
+      // binary search for first cum >= target
+      let lo = 0;
+      let hi = cum.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cum[mid] < target) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    };
 
     for (let t = 0; t < N_TREES; t++) {
       // Bagging: sample with replacement, ratio of original size.
@@ -211,7 +242,7 @@ export class RandomForest {
       );
       const indices: number[] = [];
       for (let i = 0; i < sampleSize; i++) {
-        indices.push(Math.floor(rng() * X.length));
+        indices.push(drawIndex());
       }
       trees.push(buildTree(X, y, indices, 0, featureCount, rng));
     }

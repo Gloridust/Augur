@@ -4,6 +4,8 @@ import { SkipGramEmbedding, type EmbeddingState } from './models/embedding';
 import { OnlineLogReg, type LogRegState } from './models/logreg';
 import { DomainSequenceMemory, type SequenceMemoryState } from './models/markov';
 import { RandomForest, type ForestState } from './models/randomforest';
+import { TransitionModel, type TransitionState } from './models/transition';
+import { TinyMLP, type MlpState } from './models/mlp';
 
 // v3 = expanded feature set (cyclic time, audible/discarded, tab position,
 // window homogeneity, named groups, navCount, idle) + Adam optimizer
@@ -21,9 +23,20 @@ const KV_CLEANUP_MODEL = 'model:cleanup:v4';
 // "which of several plausible candidates", and only hard negatives train
 // that boundary. Bumping forces a clean re-fit via auto-warmup on update
 // so no v5/v6-era gradients linger in the Adam state.
-const KV_RECOMMEND_MODEL = 'model:recommend:v7';
+// v8 = +8 features (directional transitionAffinity, sessionSim/cohesion,
+// session-position, hourActivityZ, banditLogit, prefixConcentration) AND a
+// ranking objective change: trainImplicitOpen now uses group-wise sampled
+// softmax (learning-to-rank) instead of pointwise binary updates, and the
+// switch-event training filter (only "new-intent" opens count). The
+// multiplicative bandit blend is gone — the bandit is a learned feature
+// now. Bumping resets the Adam/weight state so the new objective trains
+// clean; auto-warmup re-fits from the existing event log on update.
+const KV_RECOMMEND_MODEL = 'model:recommend:v8';
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
-const KV_RECOMMEND_FOREST = 'model:recommend:forest:v1';
+const KV_RECOMMEND_FOREST = 'model:recommend:forest:v2'; // feature shape changed
+const KV_EVAL_HISTORY = 'evalHistory:v1';
+const KV_TRANSITION = 'transition:v1';
+const KV_MLP = 'model:recommend:mlp:v1';
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';
 const KV_RECOMMEND_BANDIT = 'bandit:recommend:v1';
 const KV_EMBEDDING = 'embedding:v1';
@@ -114,4 +127,48 @@ export async function loadRecommendForest(): Promise<RandomForest> {
 
 export async function saveRecommendForest(forest: RandomForest): Promise<void> {
   await saveKV(KV_RECOMMEND_FOREST, forest.serialize());
+}
+
+// Eval-history lab notebook (Phase 0.2). A capped ring of past evaluation
+// runs so model tuning is a measured longitudinal process that survives
+// across sessions. Each entry records the metrics + the model version, so
+// you can see whether a version bump actually moved the numbers.
+export interface EvalHistoryEntry {
+  ts: number;
+  mode: 'replay' | 'backtest';
+  sample: number;
+  modelVersion: string;
+  note?: string;
+  model: { hit1: number; hit3: number; hit5: number; mrr: number; recallAtPool: number };
+  baseline: { hit1: number; hit3: number; hit5: number; mrr: number };
+}
+const EVAL_HISTORY_CAP = 50;
+
+export async function loadEvalHistory(): Promise<EvalHistoryEntry[]> {
+  return (await loadKV<EvalHistoryEntry[]>(KV_EVAL_HISTORY)) ?? [];
+}
+
+export async function appendEvalHistory(entry: EvalHistoryEntry): Promise<void> {
+  const hist = await loadEvalHistory();
+  hist.push(entry);
+  const trimmed = hist.slice(-EVAL_HISTORY_CAP);
+  await saveKV(KV_EVAL_HISTORY, trimmed);
+}
+
+// The current recommend-model version string, for stamping eval-history
+// entries. Kept here next to the key so they can't drift.
+export const RECOMMEND_MODEL_VERSION = KV_RECOMMEND_MODEL;
+
+export async function loadTransition(): Promise<TransitionModel> {
+  return TransitionModel.load(await loadKV<TransitionState>(KV_TRANSITION));
+}
+export async function saveTransition(m: TransitionModel): Promise<void> {
+  await saveKV(KV_TRANSITION, m.serialize());
+}
+
+export async function loadMlp(inDim: number): Promise<TinyMLP> {
+  return TinyMLP.load(await loadKV<MlpState>(KV_MLP), inDim);
+}
+export async function saveMlp(m: TinyMLP): Promise<void> {
+  await saveKV(KV_MLP, m.serialize());
 }

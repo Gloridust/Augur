@@ -1,6 +1,10 @@
 import { db } from '../shared/db';
 import type { DataSummary } from '../shared/types';
 import { clearCleanupCaches } from './cleanup';
+import { clearCircadianCache } from './circadian';
+import { clearUrlPrefixCache } from './urlprefix';
+import { clearDomainTextCache } from './domaintext';
+import { clearBlendCalibCache } from './blendcalib';
 import { clearEmbeddingCache, getEmbedding } from './embedding-train';
 import { CLEANUP_FEATURE_NAMES, RECOMMEND_FEATURE_NAMES } from './features';
 import { clearRecommendCaches } from './recommend';
@@ -109,9 +113,11 @@ cleanup heads predicted, what the user did, where the model was wrong.
 | stash.json | Currently-stashed tabs |
 | workspaces.json | Saved workspaces |
 | pins.json | Pinned shortcuts |
-| kv.json | Model weights, bandit posteriors, embeddings, sequence memory, forest. \
-Keys: \`model:cleanup:vN\`, \`model:recommend:vN\`, \`model:recommend:forest:v1\`, \
-\`bandit:cleanup:v1\`, \`bandit:recommend:v1\`, \`embedding:v1\`, \`sequenceMemory:v1\` |
+| kv.json | Model weights, bandit posteriors, embeddings, sequence memory, forest, \
+circadian histogram, URL-prefix table, eval history. Keys: \`model:cleanup:vN\`, \
+\`model:recommend:vN\`, \`model:recommend:forest:vN\`, \`bandit:cleanup:v1\`, \
+\`bandit:recommend:v1\`, \`embedding:v1\`, \`sequenceMemory:v1\`, \`circadian:v1\`, \
+\`urlPrefixes:v1\`, \`evalHistory:v1\` |
 
 ## Privacy
 
@@ -196,6 +202,13 @@ export async function resetModelsOnly(): Promise<void> {
         k.startsWith('model:') ||
         k.startsWith('bandit:') ||
         k.startsWith('embedding:') ||
+        k.startsWith('sequenceMemory:') ||
+        k.startsWith('circadian:') ||
+        k.startsWith('urlPrefixes:') ||
+        k.startsWith('transition:') ||
+        k.startsWith('domainText:') ||
+        k.startsWith('blendCalib:') ||
+        k === 'mlpEnabled:v1' ||
         k === 'lastEmbedTrainAt' ||
         k === 'lastAggregateAt',
     );
@@ -203,6 +216,10 @@ export async function resetModelsOnly(): Promise<void> {
   clearCleanupCaches();
   clearRecommendCaches();
   clearEmbeddingCache();
+  clearCircadianCache();
+  clearUrlPrefixCache();
+  clearDomainTextCache();
+  clearBlendCalibCache();
 }
 
 export async function wipeAll(): Promise<void> {
@@ -233,6 +250,10 @@ export async function wipeAll(): Promise<void> {
   clearCleanupCaches();
   clearRecommendCaches();
   clearEmbeddingCache();
+  clearCircadianCache();
+  clearUrlPrefixCache();
+  clearDomainTextCache();
+  clearBlendCalibCache();
   try {
     if (chrome?.storage?.session) {
       await chrome.storage.session.clear();

@@ -176,15 +176,46 @@ export interface EvalMetrics {
   mrr: number;
 }
 export interface EvalReportData {
+  mode: 'replay' | 'backtest';
   evaluated: number;
   skipped: number;
-  model: EvalMetrics;
+  model: EvalMetrics & { recallAtPool: number };
   baseline: EvalMetrics;
   tookMs: number;
 }
-export async function evaluateModel(sample = 60): Promise<EvalReportData | null> {
-  const r = await callRpc({ kind: 'model.evaluate', sample });
+export async function evaluateModel(
+  opts: { sample?: number; mode?: 'replay' | 'backtest'; splitDays?: number } = {},
+): Promise<EvalReportData | null> {
+  const r = await callRpc({
+    kind: 'model.evaluate',
+    sample: opts.sample ?? 60,
+    mode: opts.mode ?? 'replay',
+    splitDays: opts.splitDays,
+  });
   return r.ok && r.kind === 'model.evaluate' ? r.data : null;
+}
+
+export interface EvalHistoryRow {
+  ts: number;
+  mode: 'replay' | 'backtest';
+  sample: number;
+  modelVersion: string;
+  note?: string;
+  model: EvalMetrics & { recallAtPool: number };
+  baseline: EvalMetrics;
+}
+export async function fetchEvalHistory(): Promise<EvalHistoryRow[]> {
+  const r = await callRpc({ kind: 'model.evalHistory' });
+  return r.ok && r.kind === 'model.evalHistory' ? r.data : [];
+}
+
+export async function fetchMlpStatus(): Promise<{ enabled: boolean; ready: boolean; trainedGroups: number } | null> {
+  const r = await callRpc({ kind: 'model.mlpStatus' });
+  return r.ok && r.kind === 'model.mlpStatus' ? r.data : null;
+}
+export async function setMlpEnabled(enabled: boolean): Promise<boolean> {
+  const r = await callRpc({ kind: 'model.setMlp', enabled });
+  return r.ok && r.kind === 'model.setMlp' ? r.data.enabled : false;
 }
 
 export async function stashItems(items: StashInput[]): Promise<number[]> {

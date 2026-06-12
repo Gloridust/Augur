@@ -68,6 +68,19 @@ export const RECOMMEND_FEATURE_NAMES: Array<keyof RecommendFeatures> = [
   'seqProbShort',
   'seqProbLong',
   'seqProbTime',
+  // ── v8 additions: directional + session + circadian + decision ──────
+  'transitionAffinity',
+  'sessionSim',
+  'sessionCohesion',
+  'minutesIntoSession',
+  'isSessionStart',
+  'hourActivityZ',
+  'banditLogit',
+  'prefixConcentration',
+  // ── v8 semantic + factorized transition ─────────────────────────────
+  'titleSimToFocused',
+  'titleSimToSession',
+  'factorizedTransition',
 ];
 
 // Cyclic encoding: project an integer position on a circle of period N to
@@ -200,6 +213,18 @@ export async function buildRecommendFeatures(args: {
   seqProbShort?: number;
   seqProbLong?: number;
   seqProbTime?: number;
+  // ── v8: precomputed by the caller (scoring/training paths), default 0 ─
+  transitionAffinity?: number;
+  sessionSim?: number;
+  sessionCohesion?: number;
+  minutesIntoSession?: number;
+  isSessionStart?: number;
+  hourActivityZ?: number;
+  banditLogit?: number;
+  prefixConcentration?: number;
+  titleSimToFocused?: number;
+  titleSimToSession?: number;
+  factorizedTransition?: number;
   now: number;
 }): Promise<RecommendFeatures> {
   const {
@@ -213,8 +238,33 @@ export async function buildRecommendFeatures(args: {
     seqProbShort,
     seqProbLong,
     seqProbTime,
+    transitionAffinity,
+    sessionSim,
+    sessionCohesion,
+    minutesIntoSession,
+    isSessionStart,
+    hourActivityZ,
+    banditLogit,
+    prefixConcentration,
+    titleSimToFocused,
+    titleSimToSession,
+    factorizedTransition,
     now,
   } = args;
+  // Pack the v8 additions once — identical in both return branches below.
+  const v8 = {
+    transitionAffinity: transitionAffinity ?? 0,
+    sessionSim: sessionSim ?? 0,
+    sessionCohesion: sessionCohesion ?? 0,
+    minutesIntoSession: minutesIntoSession ?? 0,
+    isSessionStart: isSessionStart ?? 0,
+    hourActivityZ: hourActivityZ ?? 0,
+    banditLogit: banditLogit ?? 0,
+    prefixConcentration: prefixConcentration ?? 0,
+    titleSimToFocused: titleSimToFocused ?? 0,
+    titleSimToSession: titleSimToSession ?? 0,
+    factorizedTransition: factorizedTransition ?? 0,
+  };
   const hourCyc = cyclic(context.hour, 24);
   const dowCyc = cyclic(context.dow, 7);
   const stats = await getDomainStats(domain);
@@ -238,6 +288,7 @@ export async function buildRecommendFeatures(args: {
       seqProbShort: seqProbShort ?? 0,
       seqProbLong: seqProbLong ?? 0,
       seqProbTime: seqProbTime ?? 0,
+      ...v8,
     };
   }
   const hourSoft = softmax(stats.hourDist.map((v) => Math.log1p(v)));
@@ -265,7 +316,50 @@ export async function buildRecommendFeatures(args: {
     seqProbShort: seqProbShort ?? 0,
     seqProbLong: seqProbLong ?? 0,
     seqProbTime: seqProbTime ?? 0,
+    ...v8,
   };
+}
+
+// Build a session vector + cohesion once per scoring pass from the focus
+// history (most-recent-last). Positional decay (0.6^distance-from-end)
+// approximates the plan's time-decay without threading per-focus
+// timestamps everywhere. Returns null vec when no focused domain has an
+// embedding. cohesion = mean pairwise cosine among embedded session
+// domains (1 = tight single workflow, ~0 = wandering across topics).
+export function buildSessionVector(
+  focusHistory: string[],
+  embedding: {
+    getVector(d: string): Float64Array | null;
+    cosine(a: string, b: string): number;
+  },
+  dim: number,
+): { vec: Float64Array | null; cohesion: number } {
+  const recent = focusHistory.slice(-8);
+  const vecs: Array<{ d: string; v: Float64Array; w: number }> = [];
+  for (let i = 0; i < recent.length; i++) {
+    const v = embedding.getVector(recent[i]);
+    if (!v) continue;
+    const distFromEnd = recent.length - 1 - i;
+    vecs.push({ d: recent[i], v, w: Math.pow(0.6, distFromEnd) });
+  }
+  if (vecs.length === 0) return { vec: null, cohesion: 0 };
+  const acc = new Float64Array(dim);
+  let wsum = 0;
+  for (const { v, w } of vecs) {
+    for (let k = 0; k < dim; k++) acc[k] += v[k] * w;
+    wsum += w;
+  }
+  if (wsum > 0) for (let k = 0; k < dim; k++) acc[k] /= wsum;
+  // Cohesion: mean pairwise cosine among the embedded session domains.
+  let cohSum = 0;
+  let cohN = 0;
+  for (let a = 0; a < vecs.length; a++) {
+    for (let b = a + 1; b < vecs.length; b++) {
+      cohSum += embedding.cosine(vecs[a].d, vecs[b].d);
+      cohN += 1;
+    }
+  }
+  return { vec: acc, cohesion: cohN > 0 ? cohSum / cohN : 1 };
 }
 
 export function summarizeCleanupReason(f: CleanupFeatures): string {

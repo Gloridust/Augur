@@ -7,7 +7,9 @@ import {
   Chip,
   CircularProgress,
   Divider,
+  FormControlLabel,
   Stack,
+  Switch,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -22,6 +24,8 @@ import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import type { ModelInspection } from '../../ml/data-ops';
 import {
   evaluateModel,
+  fetchEvalHistory,
+  fetchMlpStatus,
   fetchModelInspection,
   rebuildAggregates,
   rebuildSequenceMemory,
@@ -29,6 +33,8 @@ import {
   resetModelsOnly,
   retrainEmbedding,
   retrainForest,
+  setMlpEnabled,
+  type EvalHistoryRow,
   type EvalReportData,
 } from '../api/recommendations';
 import { toast } from './Toaster';
@@ -341,12 +347,29 @@ export function ModelDebugPanel() {
   };
 
   const [evalResult, setEvalResult] = useState<EvalReportData | null>(null);
-  const onEvaluate = async () => {
+  const [evalHistory, setEvalHistory] = useState<EvalHistoryRow[]>([]);
+  const runEval = async (mode: 'replay' | 'backtest') => {
     setBusy(true);
     try {
-      const r = await evaluateModel(60);
-      if (r) setEvalResult(r);
-      else toast({ message: t('debug.evaluateFailed'), severity: 'error' });
+      const r = await evaluateModel({ sample: 60, mode, splitDays: 7 });
+      if (r) {
+        setEvalResult(r);
+        setEvalHistory(await fetchEvalHistory());
+      } else toast({ message: t('debug.evaluateFailed'), severity: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const [mlp, setMlp] = useState<{ enabled: boolean; ready: boolean; trainedGroups: number } | null>(null);
+  useEffect(() => {
+    void fetchEvalHistory().then(setEvalHistory);
+    void fetchMlpStatus().then(setMlp);
+  }, []);
+  const onToggleMlp = async (on: boolean) => {
+    setBusy(true);
+    try {
+      await setMlpEnabled(on);
+      setMlp(await fetchMlpStatus());
     } finally {
       setBusy(false);
     }
@@ -515,27 +538,41 @@ export function ModelDebugPanel() {
           <Typography variant="subtitle1" sx={{ fontWeight: 500, flex: 1 }}>
             {t('debug.evaluation')}
           </Typography>
-          <Tooltip title={t('debug.evaluateTooltip')}>
-            <span>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<QueryStatsIcon />}
-                onClick={onEvaluate}
-                disabled={busy}
-              >
-                {t('debug.evaluate')}
-              </Button>
-            </span>
-          </Tooltip>
+          <Stack direction="row" spacing={1}>
+            <Tooltip title={t('debug.evaluateTooltip')}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<QueryStatsIcon />}
+                  onClick={() => runEval('replay')}
+                  disabled={busy}
+                >
+                  {t('debug.evaluate')}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title={t('debug.backtestTooltip')}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => runEval('backtest')}
+                  disabled={busy}
+                >
+                  {t('debug.backtest')}
+                </Button>
+              </span>
+            </Tooltip>
+          </Stack>
         </Box>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
           {t('debug.evaluationHint')}
         </Typography>
         {evalResult && (
-          <Card sx={{ p: 2 }}>
+          <Card sx={{ p: 2, mb: 1.5 }}>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-              {t('debug.evaluatedOn', {
+              {t(evalResult.mode === 'backtest' ? 'debug.backtestedOn' : 'debug.evaluatedOn', {
                 n: evalResult.evaluated,
                 ms: evalResult.tookMs,
               })}
@@ -590,9 +627,90 @@ export function ModelDebugPanel() {
                     </tr>
                   );
                 })}
+                {/* recall@pool: candidate generation, no baseline equivalent */}
+                <tr>
+                  <td>{t('debug.recallAtPool')}</td>
+                  <td>{(evalResult.model.recallAtPool * 100).toFixed(1)}%</td>
+                  <td>—</td>
+                  <td>—</td>
+                </tr>
               </tbody>
             </Box>
           </Card>
+        )}
+        {evalHistory.length > 1 && (
+          <Box sx={{ mt: 1 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              {t('debug.evalHistoryTitle')}
+            </Typography>
+            <Box
+              component="table"
+              sx={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 12,
+                '& th, & td': { textAlign: 'right', py: 0.4, px: 0.75, borderBottom: '1px solid var(--mui-palette-divider)' },
+                '& th:first-of-type, & td:first-of-type': { textAlign: 'left' },
+              }}
+            >
+              <thead>
+                <tr>
+                  <th>{t('debug.when')}</th>
+                  <th>{t('debug.mode')}</th>
+                  <th>hit@1</th>
+                  <th>hit@3</th>
+                  <th>MRR</th>
+                  <th>recall</th>
+                </tr>
+              </thead>
+              <tbody>
+                {evalHistory.slice(-12).reverse().map((h, i) => (
+                  <tr key={`${h.ts}-${i}`}>
+                    <td>
+                      {new Intl.DateTimeFormat(i18n.language, {
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }).format(new Date(h.ts))}
+                    </td>
+                    <td>{h.mode === 'backtest' ? t('debug.modeBacktest') : t('debug.modeReplay')}</td>
+                    <td>{(h.model.hit1 * 100).toFixed(0)}%</td>
+                    <td>{(h.model.hit3 * 100).toFixed(0)}%</td>
+                    <td>{(h.model.mrr * 100).toFixed(0)}%</td>
+                    <td>{(h.model.recallAtPool * 100).toFixed(0)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Box>
+          </Box>
+        )}
+        {mlp && (
+          <Box sx={{ mt: 1.5 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={mlp.enabled}
+                  disabled={busy || !mlp.ready}
+                  onChange={(_, v) => onToggleMlp(v)}
+                />
+              }
+              label={
+                <Typography variant="body2">
+                  {t('debug.mlpToggle')}
+                  <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                    {mlp.ready
+                      ? t('debug.mlpReady', { n: mlp.trainedGroups })
+                      : t('debug.mlpWarming', { n: mlp.trainedGroups })}
+                  </Typography>
+                </Typography>
+              }
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              {t('debug.mlpHint')}
+            </Typography>
+          </Box>
         )}
       </Box>
 

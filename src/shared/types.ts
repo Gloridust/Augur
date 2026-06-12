@@ -254,6 +254,38 @@ export interface RecommendFeatures {
   seqProbShort: number;  // exp-decayed transitions in last ~30min
   seqProbLong: number;   // bigram + trigram counts, embedding-smoothed
   seqProbTime: number;   // bigram conditioned on hour-of-day bucket
+  // ── v8 additions ────────────────────────────────────────────────────
+  // Directed transition affinity sigmoid(inVec[focused]·outVec[candidate]):
+  // asymmetric A→B likelihood from the skip-gram's separate in/out tables.
+  transitionAffinity: number;
+  // Multi-tab session context (intent is often spread across several open
+  // tabs, not just the focused one). sessionSim = cosine(candidate,
+  // session-vector); sessionCohesion = how tight the session cluster is
+  // (high = deep in one workflow, trust sessionSim; low = wandering).
+  sessionSim: number;
+  sessionCohesion: number;
+  // Where in the browsing session we are. First-tab intent (mail / news
+  // ritual) differs systematically from mid-session continuation.
+  minutesIntoSession: number;
+  isSessionStart: number;
+  // z-score of the current hour against the user's OWN activity rhythm.
+  hourActivityZ: number;
+  // Per-domain acceptance posterior as a logit feature (Phase 4.1) —
+  // replaces the old hard-coded multiplicative bandit blend.
+  banditLogit: number;
+  // Share of the domain's traffic concentrated in its single top URL
+  // prefix — high means a domain-level pick maps to a precise page.
+  prefixConcentration: number;
+  // ── Semantic layer (textembed/domaintext) ──────────────────────────
+  // Text-vector similarity of the candidate's pages to the focused domain's
+  // and to the session's — captures shared vocabulary/topic even between
+  // domains never co-visited (which the co-occurrence skip-gram can't).
+  titleSimToFocused: number;
+  titleSimToSession: number;
+  // ── Factorized transition model (models/transition.ts) ──────────────
+  // Generalizing next-domain score from learned u(context)·v(target)
+  // vectors — fires even for (from→to) pairs the count tables never saw.
+  factorizedTransition: number;
 }
 
 export interface RecommendationContext {

@@ -56,6 +56,19 @@ export class BetaBandit {
     return a.alpha / (a.alpha + a.beta);
   }
 
+  // Posterior log-odds, clipped — the per-domain acceptance prior as a
+  // logit feature for the LR (Phase 4.1). ln(α/β): >0 = historically
+  // accepted, <0 = historically ignored, ~0 = no evidence (prior 1/1).
+  logit(id: string, clip = 3): number {
+    const a = this.getArm(id);
+    const v = Math.log(a.alpha / a.beta);
+    return Math.max(-clip, Math.min(clip, v));
+  }
+
+  impressionsOf(id: string): number {
+    return this.getArm(id).impressions;
+  }
+
   recordImpression(id: string): void {
     this.getArm(id).impressions += 1;
   }

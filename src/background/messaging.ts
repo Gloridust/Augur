@@ -66,6 +66,7 @@ async function buildContext(): Promise<{
   openDomains: string[];
   pinnedDomains: string[];
   focusHistory: string[];
+  sessionStartTs?: number;
 }> {
   const now = new Date();
   const tabs = await chrome.tabs.query({});
@@ -82,10 +83,11 @@ async function buildContext(): Promise<{
   // Recent focus history from chrome.storage.session — populated by the
   // SW's startFocusSegment path. Used by sequence-memory predictors for
   // candidate generation and per-candidate scoring.
-  const fhRaw = await chrome.storage.session.get('augur:focusHistory');
+  const fhRaw = await chrome.storage.session.get(['augur:focusHistory', 'augur:session']);
   const focusHistory = Array.isArray(fhRaw['augur:focusHistory'])
     ? (fhRaw['augur:focusHistory'] as string[])
     : [];
+  const sess = fhRaw['augur:session'] as { startTs: number } | undefined;
   return {
     hour: now.getHours(),
     dow: now.getDay(),
@@ -93,6 +95,7 @@ async function buildContext(): Promise<{
     openDomains,
     pinnedDomains,
     focusHistory,
+    sessionStartTs: sess?.startTs,
   };
 }
 
@@ -207,8 +210,27 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       }
       case 'model.evaluate': {
         const { evaluateRecommend } = await import('../ml/eval');
-        const data = await evaluateRecommend(req.sample ?? 60);
+        const data = await evaluateRecommend({
+          sample: req.sample ?? 60,
+          mode: req.mode ?? 'replay',
+          splitDays: req.splitDays,
+          note: req.note,
+        });
         return { ok: true, kind: 'model.evaluate', data };
+      }
+      case 'model.evalHistory': {
+        const { loadEvalHistory } = await import('../ml/persistence');
+        const data = await loadEvalHistory();
+        return { ok: true, kind: 'model.evalHistory', data };
+      }
+      case 'model.mlpStatus': {
+        const { mlpStatus } = await import('../ml/recommend');
+        return { ok: true, kind: 'model.mlpStatus', data: await mlpStatus() };
+      }
+      case 'model.setMlp': {
+        const { setMlpEnabled } = await import('../ml/recommend');
+        await setMlpEnabled(req.enabled);
+        return { ok: true, kind: 'model.setMlp', data: { enabled: req.enabled } };
       }
       case 'stash.add': {
         const data = await stashTabs(req.items);

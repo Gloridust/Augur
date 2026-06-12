@@ -44,7 +44,10 @@ export type RpcRequest =
   | { kind: 'forest.retrain' }
   | { kind: 'sequence.rebuild' }
   | { kind: 'lr.replay' }
-  | { kind: 'model.evaluate'; sample?: number }
+  | { kind: 'model.evaluate'; sample?: number; mode?: 'replay' | 'backtest'; splitDays?: number; note?: string }
+  | { kind: 'model.evalHistory' }
+  | { kind: 'model.mlpStatus' }
+  | { kind: 'model.setMlp'; enabled: boolean }
   | { kind: 'insights.get' }
   | { kind: 'data.summary' }
   | { kind: 'data.export' }
@@ -105,12 +108,28 @@ export type RpcResponse =
       ok: true;
       kind: 'model.evaluate';
       data: {
+        mode: 'replay' | 'backtest';
         evaluated: number;
         skipped: number;
-        model: { hit1: number; hit3: number; hit5: number; mrr: number };
+        model: { hit1: number; hit3: number; hit5: number; mrr: number; recallAtPool: number };
         baseline: { hit1: number; hit3: number; hit5: number; mrr: number };
         tookMs: number;
       };
+    }
+  | { ok: true; kind: 'model.mlpStatus'; data: { enabled: boolean; ready: boolean; trainedGroups: number } }
+  | { ok: true; kind: 'model.setMlp'; data: { enabled: boolean } }
+  | {
+      ok: true;
+      kind: 'model.evalHistory';
+      data: Array<{
+        ts: number;
+        mode: 'replay' | 'backtest';
+        sample: number;
+        modelVersion: string;
+        note?: string;
+        model: { hit1: number; hit3: number; hit5: number; mrr: number; recallAtPool: number };
+        baseline: { hit1: number; hit3: number; hit5: number; mrr: number };
+      }>;
     }
   | { ok: true; kind: 'workspace.list'; data: Workspace[] }
   | { ok: true; kind: 'workspace.save'; data: number }

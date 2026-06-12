@@ -20,6 +20,10 @@ import {
   saveSequenceMemory,
   setLastAggregateAt,
 } from '../ml/persistence';
+import { bumpCircadian, decayCircadian } from '../ml/circadian';
+import { bumpUrlPrefix, pruneUrlPrefixes } from '../ml/urlprefix';
+import { observeDomainText, pruneDomainText } from '../ml/domaintext';
+import { trainBlendCalib } from '../ml/blendcalib';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
 import { registerMessaging } from './messaging';
 import {
@@ -84,10 +88,40 @@ function nowParts(): { ts: number; hourOfDay: number; dayOfWeek: number } {
   return { ts, hourOfDay: d.getHours(), dayOfWeek: d.getDay() };
 }
 
-async function buildOpenContext(): Promise<{
+const SESSION_GAP_MS = 30 * 60 * 1000;
+const RECENT_FOCUS_MS = 15 * 60 * 1000;
+const SESSION_KEY = 'augur:session'; // { startTs, lastEventTs }
+
+async function touchSession(now: number): Promise<number> {
+  const out = await chrome.storage.session.get(SESSION_KEY);
+  const prev = out[SESSION_KEY] as { startTs: number; lastEventTs: number } | undefined;
+  let startTs = prev?.startTs ?? now;
+  const lastEventTs = prev?.lastEventTs ?? now;
+  if (now - lastEventTs > SESSION_GAP_MS) startTs = now; // new session after a gap
+  await chrome.storage.session.set({ [SESSION_KEY]: { startTs, lastEventTs: now } });
+  return startTs;
+}
+
+// Domains focused/opened/navigated within the last 15 minutes — the
+// switch-event filter's "recently seen" set (Phase 1.1).
+async function recentlyFocusedDomains(now: number): Promise<string[]> {
+  const since = now - RECENT_FOCUS_MS;
+  const rows = await db.events
+    .where('ts')
+    .between(since, now, true, true)
+    .filter(
+      (e) => e.type === 'focus' || e.type === 'open' || e.type === 'navigate',
+    )
+    .toArray();
+  return Array.from(new Set(rows.map((e) => e.domain).filter((d): d is string => !!d)));
+}
+
+async function buildOpenContext(now: number): Promise<{
   focusHistory: string[];
   focusedDomain?: string;
   openDomains: string[];
+  recentlyFocusedDomains: string[];
+  sessionStartTs: number;
 }> {
   const focusHistory = await getFocusHistory();
   const focusedTabId = await getFocusedTabId();
@@ -97,7 +131,17 @@ async function buildOpenContext(): Promise<{
   const openDomains = Object.values(stateMap)
     .map((s) => s.domain)
     .filter((d): d is string => !!d);
-  return { focusHistory, focusedDomain, openDomains };
+  const [recent, sessionStartTs] = await Promise.all([
+    recentlyFocusedDomains(now),
+    touchSession(now),
+  ]);
+  return {
+    focusHistory,
+    focusedDomain,
+    openDomains,
+    recentlyFocusedDomains: recent,
+    sessionStartTs,
+  };
 }
 
 async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'>): Promise<void> {
@@ -106,13 +150,18 @@ async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'
   try {
     await db.events.add(event);
     await updateOnEvent(event);
+    // Keep the personal-circadian histogram current for any tracked event.
+    if (event.domain) await bumpCircadian(stamp.hourOfDay, stamp.ts);
     if ((event.type === 'open' || event.type === 'navigate') && event.domain) {
       await updateCooccurrenceForOpen(event.domain, event.ts);
-      // Pass real context so trainImplicitOpen can compute meaningful
-      // embedSim / seqProb / openDomains features at training time. The
-      // pre-fix call sent `focusedDomain: undefined` and `openDomains: []`,
-      // which collapsed every implicit positive into context-free noise.
-      const ctx = await buildOpenContext();
+      // URL-prefix table (Phase 4.3) — track the precise page, not just domain.
+      await bumpUrlPrefix(event.domain, event.url, event.ts);
+      // Semantic text vector — fold the page's title+URL words into the
+      // domain's running-mean text embedding (the "meaning" layer).
+      await observeDomainText(event.domain, event.title, event.url, event.ts);
+      // Pass real context so trainImplicitOpen computes meaningful features
+      // AND applies the switch-event filter (Phase 1.1).
+      const ctx = await buildOpenContext(event.ts);
       await trainImplicitOpen(event, ctx);
     }
   } catch (err) {
@@ -266,6 +315,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       'model:recommend:v4', // bumped to v5 when implicit-train class weights were fixed
       'model:recommend:v5', // bumped to v6 when negative-sample distribution was fixed
       'model:recommend:v6', // bumped to v7 when mixture (easy+hard) sampling landed
+      'model:recommend:v7', // bumped to v8: +8 features, group-softmax, switch filter
+      'model:recommend:forest:v1', // forest feature shape changed (v1 → v2)
     ];
     let staleDeleted = 0;
     try {
@@ -313,7 +364,7 @@ async function warmupRecommendIfNeeded(): Promise<void> {
   if (warmupAttempted) return;
   warmupAttempted = true;
   try {
-    const recRow = await db.kv.get('model:recommend:v7');
+    const recRow = await db.kv.get('model:recommend:v8');
     const rec = recRow?.value as { trainedSamples?: number } | undefined;
     const trained = rec?.trainedSamples ?? 0;
     if (trained >= WARMUP_MIN_SAMPLES) return;
@@ -339,6 +390,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'nightlyDecay') {
     const now = Date.now();
     await decayAndPrune(now);
+    await decayCircadian(now);
+    await pruneUrlPrefixes(now);
+    await pruneDomainText(now);
+    // Phase 4.2: refit the final-score calibrator from realized outcomes
+    // (oracle_shown → opened-within-5min joins).
+    try {
+      await trainBlendCalib(now);
+    } catch (err) {
+      console.error('[augur] blend calibration failed', err);
+    }
     await setLastAggregateAt(now);
   } else if (alarm.name === 'embeddingRetrain') {
     await trainEmbeddingBatch();
