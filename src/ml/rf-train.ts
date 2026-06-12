@@ -326,7 +326,14 @@ export async function rebuildSequenceMemory(): Promise<{
 //
 // Sample size is capped to keep the runtime bounded; recent events are
 // preferred so the model reflects current behavior rather than history.
-const REPLAY_CAP = 1000;
+// 5000 (was 1000): only genuine switch-opens become training groups (the
+// Phase 1.1 filter), so ~1–2% of events qualify. 1000 events yielded only
+// ~17 groups — not enough to cross the MLP's 50-group readiness floor in a
+// single replay. 5000 yields ~60–90 switch-opens, enough for one click to
+// warm the MLP past the threshold (and gives the LR a broader, still-recent
+// training window). Runtime stays a few seconds — the expensive per-group
+// feature-building only runs for the qualifying switch-opens, not all 5000.
+const REPLAY_CAP = 5000;
 
 export async function replayImplicitTraining(): Promise<{
   openSamples: number;
