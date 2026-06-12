@@ -54,7 +54,7 @@ import {
 } from './domaintext';
 import { textCosine } from './textembed';
 import { calibrateFrom, loadBlendCalib } from './blendcalib';
-import { loadMlp, loadTransition, saveTransition } from './persistence';
+import { loadMlp, loadTransition, saveMlp, saveTransition } from './persistence';
 import { clamp } from './math';
 
 const FEATURE_COUNT = RECOMMEND_FEATURE_NAMES.length;
@@ -661,13 +661,16 @@ export async function trainImplicitOpen(
 
   // Phase 5: train the (off-by-default) MLP on the same group so it's warm
   // and backtest-comparable whenever the user chooses to enable it.
+  // (saveMlp is a STATIC import — a prior `await import('./persistence')`
+  // here threw "document is not defined" in the service worker and was
+  // silently swallowed, so the MLP trained in memory but never persisted,
+  // leaving its toggle stuck at 0/50 forever.)
   try {
     const mlp = await getMlp();
     mlp.updateGroup(group, ctx?.sampleWeight ?? 1);
-    const { saveMlp } = await import('./persistence');
     await saveMlp(mlp);
-  } catch {
-    // MLP training is best-effort; never block the LR path.
+  } catch (err) {
+    console.error('[augur] MLP train/save failed', err);
   }
 
   await saveRecommendModel(model);

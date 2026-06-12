@@ -14,11 +14,14 @@ import type { TabEvent } from '../shared/types';
 import { getDomainStats } from './aggregate';
 import { getEmbedding } from './embedding-train';
 import {
+  buildCleanupFeatures,
   buildRecommendFeatures,
   buildSessionVector,
   RECOMMEND_FEATURE_NAMES,
   vectorFromRecommend,
 } from './features';
+import { trainImplicitOpen } from './recommend';
+import { trainImplicitCleanup } from './cleanup';
 import { sessionContext, visitVelocity } from './timeseries';
 import { DomainSequenceMemory } from './models/markov';
 import { RandomForest } from './models/randomforest';
@@ -329,13 +332,12 @@ export async function replayImplicitTraining(): Promise<{
   openSamples: number;
   cleanupSamples: number;
 }> {
-  // Lazy-import to avoid circular deps — recommend.ts imports from
-  // persistence.ts which imports from models/randomforest.ts which is
-  // loaded by this file at top-level.
-  const { trainImplicitOpen } = await import('./recommend');
-  const { trainImplicitCleanup } = await import('./cleanup');
-  const { buildCleanupFeatures } = await import('./features');
-
+  // (trainImplicitOpen / trainImplicitCleanup / buildCleanupFeatures are now
+  // STATIC imports. They were lazy `await import()` calls out of a circular-
+  // dep worry that doesn't actually exist — neither recommend nor cleanup
+  // imports rf-train — and the dynamic import risked the same SW
+  // "document is not defined" failure. The symbols are only used at runtime
+  // inside this function, so even a cycle would be safe.)
   const events = await db.events.orderBy('ts').toArray();
   const recent = events.slice(-REPLAY_CAP);
   const dwellIdx = buildDwellIndex(recent);
