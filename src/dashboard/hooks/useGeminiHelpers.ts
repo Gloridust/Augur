@@ -35,6 +35,80 @@ function getLM(): LMLike | undefined {
   return (window as unknown as { LanguageModel?: LMLike }).LanguageModel;
 }
 
+export type AiStatus = 'checking' | 'unavailable' | 'downloadable' | 'downloading' | 'available';
+
+// ── Single source of truth for on-device AI capability ──────────────
+// Probes `window.LanguageModel` once and reports a coarse status. Used by
+// BOTH the settings UI (to show the availability banner + disable toggles)
+// and the nav (to decide whether to mount the AI assistant button at all).
+// Capability detection — not user-agent sniffing — so it works correctly on
+// Edge / Brave / Arc (which may or may not ship the Prompt API) and degrades
+// cleanly for Firefox / Safari / mainland-China Chrome where the model can't
+// download. Everything outside the AI features works regardless.
+export function useAiCapability(): { status: AiStatus; available: boolean } {
+  const [status, setStatus] = useState<AiStatus>('checking');
+  useEffect(() => {
+    let cancelled = false;
+    const lm = getLM();
+    if (!lm) {
+      setStatus('unavailable');
+      return;
+    }
+    void lm
+      .availability()
+      .then((a) => {
+        if (!cancelled) setStatus(a);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('unavailable');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const available =
+    status === 'available' || status === 'downloadable' || status === 'downloading';
+  return { status, available };
+}
+
+// ── AI assistant (nav chat) on/off preference ───────────────────────
+const ASSISTANT_KEY = 'augur:aiAssistantEnabled';
+const ASSISTANT_EVENT = 'augur:ai-assistant-changed';
+
+function readAssistantPref(): boolean {
+  // Default ON: capable users get the assistant out of the box. The nav
+  // only mounts it when capability ALSO holds, so this defaulting can't
+  // surface a dead button for non-Gemini browsers.
+  try {
+    const raw = localStorage.getItem(ASSISTANT_KEY);
+    return raw === null ? true : raw === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function isAiAssistantEnabled(): boolean {
+  return readAssistantPref();
+}
+
+export function useAiAssistantPref(): [boolean, (v: boolean) => void] {
+  const [enabled, setEnabled] = useState<boolean>(readAssistantPref);
+  useEffect(() => {
+    const handler = (e: Event) => setEnabled(!!(e as CustomEvent<boolean>).detail);
+    window.addEventListener(ASSISTANT_EVENT, handler);
+    return () => window.removeEventListener(ASSISTANT_EVENT, handler);
+  }, []);
+  const set = useCallback((v: boolean) => {
+    try {
+      localStorage.setItem(ASSISTANT_KEY, v ? 'true' : 'false');
+    } catch {
+      // ignore
+    }
+    window.dispatchEvent(new CustomEvent<boolean>(ASSISTANT_EVENT, { detail: v }));
+  }, []);
+  return [enabled, set];
+}
+
 function readPref(): boolean {
   // Default OFF — explicit opt-in, never assumed. The settings toggle
   // surfaces the choice on first install.

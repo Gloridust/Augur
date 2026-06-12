@@ -4,6 +4,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import { AugurMark } from './AugurMark';
 import { NavSearchBar } from './NavSearchBar';
 import { AiAssistant } from './AiAssistant';
+import { useAiAssistantPref, useAiCapability } from '../hooks/useGeminiHelpers';
 
 interface Props {
   onOpenSettings: () => void;
@@ -11,6 +12,13 @@ interface Props {
 
 export function AppHeader({ onOpenSettings }: Props) {
   const { t } = useTranslation();
+  // Only surface the AI assistant when the on-device model is actually
+  // reachable AND the user hasn't turned it off. On Edge/Firefox/Safari or
+  // mainland-China Chrome (no Gemini Nano) the button never appears — no
+  // dead-on-arrival affordance. Everything else in the nav works the same.
+  const { available: aiAvailable } = useAiCapability();
+  const [assistantEnabled] = useAiAssistantPref();
+  const showAssistant = aiAvailable && assistantEnabled;
   return (
     <AppBar position="sticky">
       <Toolbar
@@ -55,7 +63,7 @@ export function AppHeader({ onOpenSettings }: Props) {
 
         <NavSearchBar />
 
-        <AiAssistant />
+        {showAssistant && <AiAssistant />}
 
         <Tooltip title={t('actions.settings')}>
           <IconButton onClick={onOpenSettings}>

@@ -7,7 +7,7 @@ import {
 import {
   exportAll,
   exportDebugBundle,
-  exportUserMigration,
+  importAll,
   getSummary,
   inspectModels,
   resetModelsOnly,
@@ -164,9 +164,9 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         const data = await exportDebugBundle();
         return { ok: true, kind: 'data.exportDebugBundle', data };
       }
-      case 'data.exportUserMigration': {
-        const data = await exportUserMigration();
-        return { ok: true, kind: 'data.exportUserMigration', data };
+      case 'data.import': {
+        const data = await importAll(req.dump);
+        return { ok: true, kind: 'data.import', data };
       }
       case 'event.log': {
         // Dashboard-side product events (OracleHint accept, smart-cleanup

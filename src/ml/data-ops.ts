@@ -15,8 +15,18 @@ import {
 } from './persistence';
 import { bytesToBase64, writeZip } from './zip-writer';
 
+// The complete, restorable snapshot — this IS the backup AND the
+// device-migration file. It carries everything that makes an Augur install
+// "you": your saved items (workspaces, pins, stash) AND your trained
+// intelligence (every model weight, embedding, bandit posterior, sequence
+// memory, calibration — all in `kv`) AND the raw event history the models
+// learn from. Restored via importAll(), a new device is immediately as
+// smart as the old one — no weeks of cold-start retraining.
+//
+// schemaVersion 4 adds `pins` (v3 silently omitted them — a real bug in the
+// old "full backup"). Import tolerates v3 dumps (pins simply absent).
 export interface DataDump {
-  schemaVersion: 3;
+  schemaVersion: 3 | 4;
   exportedAt: number;
   events: unknown[];
   feedback: unknown[];
@@ -24,21 +34,24 @@ export interface DataDump {
   cooccurrence: unknown[];
   stash: unknown[];
   workspaces: unknown[];
+  pins?: unknown[];
   kv: unknown[];
 }
 
 export async function exportAll(): Promise<DataDump> {
-  const [events, feedback, domains, cooccurrence, stash, workspaces, kv] = await Promise.all([
-    db.events.toArray(),
-    db.feedback.toArray(),
-    db.domains.toArray(),
-    db.cooccurrence.toArray(),
-    db.stash.toArray(),
-    db.workspaces.toArray(),
-    db.kv.toArray(),
-  ]);
+  const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv] =
+    await Promise.all([
+      db.events.toArray(),
+      db.feedback.toArray(),
+      db.domains.toArray(),
+      db.cooccurrence.toArray(),
+      db.stash.toArray(),
+      db.workspaces.toArray(),
+      db.pins.toArray(),
+      db.kv.toArray(),
+    ]);
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     exportedAt: Date.now(),
     events,
     feedback,
@@ -46,7 +59,84 @@ export async function exportAll(): Promise<DataDump> {
     cooccurrence,
     stash,
     workspaces,
+    pins,
     kv,
+  };
+}
+
+export interface ImportResult {
+  ok: boolean;
+  reason?: string;
+  counts?: Record<string, number>;
+}
+
+// Restore a full backup onto this device — the other half of migration that
+// was missing. Replaces existing data (a migration target is normally a
+// fresh install; restoring is "make this device match the backup"). Caller
+// confirms first; the dashboard reloads afterward so the SW re-reads models.
+export async function importAll(raw: unknown): Promise<ImportResult> {
+  const dump = raw as Partial<DataDump> | null;
+  if (
+    !dump ||
+    typeof dump !== 'object' ||
+    !Array.isArray(dump.events) ||
+    !Array.isArray(dump.kv)
+  ) {
+    return { ok: false, reason: 'not-augur-backup' };
+  }
+
+  const tables = {
+    events: dump.events ?? [],
+    feedback: dump.feedback ?? [],
+    domains: dump.domains ?? [],
+    cooccurrence: dump.cooccurrence ?? [],
+    stash: dump.stash ?? [],
+    workspaces: dump.workspaces ?? [],
+    pins: dump.pins ?? [],
+    kv: dump.kv ?? [],
+  };
+
+  await db.transaction(
+    'rw',
+    [db.events, db.feedback, db.domains, db.cooccurrence, db.stash, db.workspaces, db.pins, db.kv],
+    async () => {
+      await Promise.all([
+        db.events.clear(),
+        db.feedback.clear(),
+        db.domains.clear(),
+        db.cooccurrence.clear(),
+        db.stash.clear(),
+        db.workspaces.clear(),
+        db.pins.clear(),
+        db.kv.clear(),
+      ]);
+      await Promise.all([
+        db.events.bulkAdd(tables.events as never[]),
+        db.feedback.bulkAdd(tables.feedback as never[]),
+        db.domains.bulkPut(tables.domains as never[]),
+        db.cooccurrence.bulkPut(tables.cooccurrence as never[]),
+        db.stash.bulkAdd(tables.stash as never[]),
+        db.workspaces.bulkAdd(tables.workspaces as never[]),
+        db.pins.bulkAdd(tables.pins as never[]),
+        db.kv.bulkPut(tables.kv as never[]),
+      ]);
+    },
+  );
+
+  // Drop every in-memory cache so the SW reloads models from the imported kv.
+  clearCleanupCaches();
+  clearRecommendCaches();
+  clearEmbeddingCache();
+  clearCircadianCache();
+  clearUrlPrefixCache();
+  clearDomainTextCache();
+  clearBlendCalibCache();
+
+  return {
+    ok: true,
+    counts: Object.fromEntries(
+      Object.entries(tables).map(([k, v]) => [k, (v as unknown[]).length]),
+    ),
   };
 }
 
@@ -156,37 +246,6 @@ predictions.
     filename: `augur-debug-${stamp}.zip`,
     base64: bytesToBase64(zipBytes),
     size: zipBytes.length,
-  };
-}
-
-// User migration export — what someone moving Augur from device A to
-// device B actually wants: their saved workspaces, pins, stash items,
-// and minimal preferences. Deliberately EXCLUDES events, model weights,
-// embeddings, etc — those are device-specific behavioral fingerprints
-// and should retrain naturally on the new device's history bootstrap.
-//
-// Shape is a single self-contained JSON for easy human inspection +
-// future programmatic import.
-export interface UserMigrationDump {
-  augurUserMigration: 1;
-  exportedAt: number;
-  workspaces: unknown[];
-  pins: unknown[];
-  stash: unknown[];
-}
-
-export async function exportUserMigration(): Promise<UserMigrationDump> {
-  const [workspaces, pins, stash] = await Promise.all([
-    db.workspaces.toArray(),
-    db.pins.toArray(),
-    db.stash.toArray(),
-  ]);
-  return {
-    augurUserMigration: 1,
-    exportedAt: Date.now(),
-    workspaces,
-    pins,
-    stash,
   };
 }
 

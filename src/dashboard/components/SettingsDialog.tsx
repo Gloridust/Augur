@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -24,12 +24,14 @@ import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import HistoryIcon from '@mui/icons-material/History';
 import BugReportIcon from '@mui/icons-material/BugReport';
-import LuggageIcon from '@mui/icons-material/Luggage';
+import UploadIcon from '@mui/icons-material/Upload';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import {
   exportAllData,
   exportDebugBundle,
-  exportUserMigration,
+  importAllData,
   seedFromBrowserHistory,
   wipeAllData,
 } from '../api/recommendations';
@@ -37,7 +39,12 @@ import { toast } from './Toaster';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
 import { useSmartPinSort } from '../hooks/useSmartPinSort';
-import { useGeminiHelpersPref } from '../hooks/useGeminiHelpers';
+import {
+  useAiAssistantPref,
+  useAiCapability,
+  useGeminiHelpersPref,
+  type AiStatus,
+} from '../hooks/useGeminiHelpers';
 import { useOracleHintPref } from '../hooks/useOracleHintPref';
 import { ModelDebugPanel } from './ModelDebugPanel';
 import { SetAsHomepageGuide } from './SetAsHomepageGuide';
@@ -60,17 +67,82 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+// Reusable label + description + switch row. Keeps every toggle in Settings
+// visually identical (a consistency win the old ad-hoc rows lacked).
+function ToggleRow({
+  title,
+  hint,
+  checked,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  hint: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography variant="body2" sx={{ color: disabled ? 'text.disabled' : 'text.primary' }}>
+          {title}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {hint}
+        </Typography>
+      </Box>
+      <Switch checked={checked} disabled={disabled} onChange={(_, v) => onChange(v)} />
+    </Box>
+  );
+}
+
+// Proactive on-device-AI availability banner. The whole point of the AI tab:
+// tell Edge / Firefox / Safari / mainland-China users UP FRONT what's going
+// on and reassure them that the rest of Augur works without it — rather than
+// letting them discover a dead button by clicking it.
+function AiAvailabilityBanner({ status }: { status: AiStatus }) {
+  const { t } = useTranslation();
+  const variant =
+    status === 'available'
+      ? { color: 'success' as const, icon: <CheckCircleIcon />, title: t('settings.aiReadyTitle'), body: t('settings.aiReadyBody') }
+      : status === 'downloadable' || status === 'downloading'
+        ? { color: 'info' as const, icon: <DownloadIcon />, title: t('settings.aiDownloadableTitle'), body: t('settings.aiDownloadableBody') }
+        : status === 'checking'
+          ? { color: 'info' as const, icon: <InfoOutlinedIcon />, title: t('settings.aiCheckingTitle'), body: '' }
+          : { color: 'warning' as const, icon: <InfoOutlinedIcon />, title: t('settings.aiUnavailableTitle'), body: t('settings.aiUnavailableBody') };
+  const tint =
+    variant.color === 'success'
+      ? 'rgba(46, 160, 67, 0.12)'
+      : variant.color === 'warning'
+        ? 'rgba(217, 119, 6, 0.12)'
+        : 'var(--mui-palette-action-hover)';
+  return (
+    <Box sx={{ display: 'flex', gap: 1.5, p: 1.75, borderRadius: 2, backgroundColor: tint }}>
+      <Box sx={{ color: `${variant.color}.main`, display: 'flex', mt: 0.25 }}>{variant.icon}</Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+          {variant.title}
+        </Typography>
+        {variant.body && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+            {variant.body}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 export function SettingsDialog({ open, onClose }: Props) {
   const { t, i18n } = useTranslation();
   const [userName, setStoredUserName] = useUserNameField();
   const [userNameDraft, setUserNameDraft] = useState(userName);
   const [smartPinSort, setSmartPinSort] = useSmartPinSort();
   const [oracleHintEnabled, setOracleHintEnabled] = useOracleHintPref();
-  const {
-    enabled: geminiEnabled,
-    setEnabled: setGeminiEnabled,
-    apiAvailable: geminiApiAvailable,
-  } = useGeminiHelpersPref();
+  const { enabled: geminiEnabled, setEnabled: setGeminiEnabled } = useGeminiHelpersPref();
+  const { status: aiStatus, available: aiAvailable } = useAiCapability();
+  const [aiAssistantEnabled, setAiAssistantEnabled] = useAiAssistantPref();
 
   // Re-seed the draft when the dialog opens so it stays consistent with the
   // current saved value (e.g. after a wipe-all that resets the name too).
@@ -78,20 +150,52 @@ export function SettingsDialog({ open, onClose }: Props) {
   const { summary, refresh } = useDataSummary();
   const [confirmingWipe, setConfirmingWipe] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'general' | 'data' | 'advanced'>('general');
+  const [tab, setTab] = useState<'general' | 'ai' | 'data' | 'advanced'>('general');
 
   const onExport = async () => {
     setBusy(true);
     try {
       const dump = await exportAllData();
       if (!dump) return;
-      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(dump)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `chromehomepage-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `augur-backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const onImportFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        toast({ message: t('settings.importBadFile'), severity: 'error' });
+        return;
+      }
+      const r = await importAllData(parsed);
+      if (!r || !r.ok) {
+        toast({
+          message:
+            r?.reason === 'not-augur-backup'
+              ? t('settings.importNotBackup')
+              : t('settings.importFailed'),
+          severity: 'error',
+        });
+        return;
+      }
+      toast({ message: t('settings.importDone'), severity: 'success' });
+      onClose();
+      // Reload so the SW re-reads the imported models + the UI re-renders.
+      window.location.reload();
     } finally {
       setBusy(false);
     }
@@ -123,26 +227,6 @@ export function SettingsDialog({ open, onClose }: Props) {
         }),
         severity: 'success',
       });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onExportMigration = async () => {
-    setBusy(true);
-    try {
-      const dump = await exportUserMigration();
-      if (!dump) {
-        toast({ message: t('settings.migrationExportFailed'), severity: 'error' });
-        return;
-      }
-      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `augur-migration-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
     } finally {
       setBusy(false);
     }
@@ -232,6 +316,7 @@ export function SettingsDialog({ open, onClose }: Props) {
           }}
         >
           <Tab value="general" label={t('settings.tabGeneral')} />
+          <Tab value="ai" label={t('settings.tabAi')} />
           <Tab value="data" label={t('settings.tabData')} />
           <Tab value="advanced" label={t('settings.tabAdvanced')} />
         </Tabs>
@@ -278,10 +363,26 @@ export function SettingsDialog({ open, onClose }: Props) {
               </Box>
             </Stack>
             <Stack spacing={1.5}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {t('homepage.title')}
-              </Typography>
-              <SetAsHomepageGuide />
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                  {t('settings.predictionsTitle')}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {t('settings.predictionsSubtitle')}
+                </Typography>
+              </Box>
+              <ToggleRow
+                title={t('settings.oracleHint')}
+                hint={t('settings.oracleHintHint')}
+                checked={oracleHintEnabled}
+                onChange={setOracleHintEnabled}
+              />
+              <ToggleRow
+                title={t('settings.smartPinSort')}
+                hint={t('settings.smartPinSortHint')}
+                checked={smartPinSort}
+                onChange={setSmartPinSort}
+              />
             </Stack>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
@@ -304,80 +405,43 @@ export function SettingsDialog({ open, onClose }: Props) {
             </Box>
             <Stack spacing={1.5}>
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {t('settings.predictionsTitle')}
+                {t('homepage.title')}
               </Typography>
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                }}
-              >
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Typography variant="body2">
-                    {t('settings.oracleHint')}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {t('settings.oracleHintHint')}
-                  </Typography>
-                </Box>
-                <Switch
-                  checked={oracleHintEnabled}
-                  onChange={(_, v) => setOracleHintEnabled(v)}
-                />
-              </Box>
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                }}
-              >
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Typography variant="body2">
-                    {t('settings.smartPinSort')}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {t('settings.smartPinSortHint')}
-                  </Typography>
-                </Box>
-                <Switch
-                  checked={smartPinSort}
-                  onChange={(_, v) => setSmartPinSort(v)}
-                />
-              </Box>
+              <SetAsHomepageGuide />
             </Stack>
-            <Stack spacing={1.5}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {t('settings.geminiTitle')}
-              </Typography>
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                }}
-              >
-                <Box sx={{ minWidth: 0, flex: 1 }}>
-                  <Typography variant="body2">
-                    {t('settings.geminiHelpers')}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {geminiApiAvailable
-                      ? t('settings.geminiHelpersHint')
-                      : t('settings.geminiHelpersUnavailable')}
-                  </Typography>
-                </Box>
-                <Switch
-                  checked={geminiEnabled && geminiApiAvailable}
-                  disabled={!geminiApiAvailable}
-                  onChange={(_, v) => setGeminiEnabled(v)}
-                />
-              </Box>
+          </Stack>
+        )}
+
+        {tab === 'ai' && (
+          <Stack spacing={3} divider={<Divider flexItem />}>
+            <AiAvailabilityBanner status={aiStatus} />
+            <Stack spacing={2}>
+              <ToggleRow
+                title={t('settings.aiAssistant')}
+                hint={
+                  aiAvailable
+                    ? t('settings.aiAssistantHint')
+                    : t('settings.aiUnavailableShort')
+                }
+                checked={aiAssistantEnabled && aiAvailable}
+                disabled={!aiAvailable}
+                onChange={setAiAssistantEnabled}
+              />
+              <ToggleRow
+                title={t('settings.geminiHelpers')}
+                hint={
+                  aiAvailable
+                    ? t('settings.geminiHelpersHint')
+                    : t('settings.aiUnavailableShort')
+                }
+                checked={geminiEnabled && aiAvailable}
+                disabled={!aiAvailable}
+                onChange={setGeminiEnabled}
+              />
             </Stack>
+            <Typography variant="caption" color="text.secondary">
+              {t('settings.aiPrivacyNote')}
+            </Typography>
           </Stack>
         )}
 
@@ -421,10 +485,60 @@ export function SettingsDialog({ open, onClose }: Props) {
               </Box>
             </Stack>
 
-            {/* ── Import & export ───────────────────────────────────── */}
+            {/* ── Backup & move to another device ───────────────────── */}
+            <Stack spacing={1.5}>
+              <Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                  {t('settings.backupTitle')}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {t('settings.backupSubtitle')}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                <Tooltip title={t('settings.exportTooltip')}>
+                  <span>
+                    <Button
+                      onClick={onExport}
+                      startIcon={<DownloadIcon />}
+                      disabled={busy}
+                      variant="contained"
+                      disableElevation
+                    >
+                      {t('settings.export')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title={t('settings.importTooltip')}>
+                  <span>
+                    <Button
+                      onClick={() => fileInputRef.current?.click()}
+                      startIcon={<UploadIcon />}
+                      disabled={busy}
+                      variant="outlined"
+                    >
+                      {t('settings.import')}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = ''; // allow re-selecting the same file
+                    if (f) void onImportFile(f);
+                  }}
+                />
+              </Stack>
+            </Stack>
+
+            {/* ── Other tools ───────────────────────────────────────── */}
             <Stack spacing={1.5}>
               <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
-                {t('settings.importExportTitle')}
+                {t('settings.toolsTitle')}
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Tooltip title={t('settings.historyBootstrapTooltip')}>
@@ -436,30 +550,6 @@ export function SettingsDialog({ open, onClose }: Props) {
                       variant="outlined"
                     >
                       {t('settings.historyBootstrap')}
-                    </Button>
-                  </span>
-                </Tooltip>
-                <Tooltip title={t('settings.exportTooltip')}>
-                  <span>
-                    <Button
-                      onClick={onExport}
-                      startIcon={<DownloadIcon />}
-                      disabled={busy}
-                      variant="outlined"
-                    >
-                      {t('settings.export')}
-                    </Button>
-                  </span>
-                </Tooltip>
-                <Tooltip title={t('settings.migrationExportTooltip')}>
-                  <span>
-                    <Button
-                      onClick={onExportMigration}
-                      startIcon={<LuggageIcon />}
-                      disabled={busy}
-                      variant="outlined"
-                    >
-                      {t('settings.migrationExport')}
                     </Button>
                   </span>
                 </Tooltip>

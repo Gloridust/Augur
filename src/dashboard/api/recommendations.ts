@@ -112,16 +112,14 @@ export async function exportDebugBundle(): Promise<DebugBundleData | null> {
   return r.ok && r.kind === 'data.exportDebugBundle' ? r.data : null;
 }
 
-export interface UserMigrationData {
-  augurUserMigration: 1;
-  exportedAt: number;
-  workspaces: unknown[];
-  pins: unknown[];
-  stash: unknown[];
+export interface ImportResultData {
+  ok: boolean;
+  reason?: string;
+  counts?: Record<string, number>;
 }
-export async function exportUserMigration(): Promise<UserMigrationData | null> {
-  const r = await callRpc({ kind: 'data.exportUserMigration' });
-  return r.ok && r.kind === 'data.exportUserMigration' ? r.data : null;
+export async function importAllData(dump: unknown): Promise<ImportResultData | null> {
+  const r = await callRpc({ kind: 'data.import', dump });
+  return r.ok && r.kind === 'data.import' ? r.data : null;
 }
 
 // Log a product-surface event from the dashboard. Used for telemetry the

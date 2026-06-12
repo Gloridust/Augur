@@ -55,7 +55,7 @@ export type RpcRequest =
   | { kind: 'data.resetModels' }
   | { kind: 'data.bootstrapHistory'; force?: boolean }
   | { kind: 'data.exportDebugBundle' }
-  | { kind: 'data.exportUserMigration' }
+  | { kind: 'data.import'; dump: unknown }
   | {
       // Dashboard-initiated event log entry. `partial` is a TabEvent without
       // ts/hour/dow (SW stamps those). Used for product-surface events like
@@ -148,14 +148,8 @@ export type RpcResponse =
     }
   | {
       ok: true;
-      kind: 'data.exportUserMigration';
-      data: {
-        augurUserMigration: 1;
-        exportedAt: number;
-        workspaces: unknown[];
-        pins: unknown[];
-        stash: unknown[];
-      };
+      kind: 'data.import';
+      data: { ok: boolean; reason?: string; counts?: Record<string, number> };
     }
   | { ok: true; kind: 'ack' }
   | { ok: false; error: string };
