@@ -77,4 +77,14 @@ export class BetaBandit {
     const a = this.getArm(id);
     a.beta += weight;
   }
+
+  // Fractional positive — used for implicit signals that are weaker than an
+  // explicit accept (e.g. "user dwelled on this domain for over a minute
+  // after opening it", which suggests the open was worthwhile). Does not
+  // increment the `acceptances` counter, which stays reserved for explicit
+  // user actions so the debug panel's accept-rate stays interpretable.
+  recordSoftAccept(id: string, weight = 0.3): void {
+    const a = this.getArm(id);
+    a.alpha += weight;
+  }
 }

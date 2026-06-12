@@ -11,7 +11,7 @@
 
 import { db } from '../shared/db';
 import type { TabEvent } from '../shared/types';
-import { getDomainStats, getTopDomainsByFrecency } from './aggregate';
+import { getDomainStats } from './aggregate';
 import { getEmbedding } from './embedding-train';
 import {
   buildRecommendFeatures,
@@ -64,8 +64,13 @@ export async function trainRecommendForest(): Promise<{
 
   const embedding = await getEmbedding();
   const seq = await loadSequenceMemory();
-  const negPool = await getTopDomainsByFrecency(80);
-  const negDomains = negPool
+  // Mixture negative sampling — mirrors trainImplicitOpen. Easy negatives
+  // come UNIFORMLY from the whole domain population (top-frecency-only
+  // sampling taught the model "popular = negative", see recommend.ts);
+  // hard negatives come from the sequence model's own predictions for the
+  // event's context, sharpening the among-plausible-candidates boundary.
+  const allDomainRows = await db.domains.toArray();
+  const uniformNegDomains = allDomainRows
     .map((p) => p.domain)
     .filter((d) => d && !d.startsWith('chrome'));
 
@@ -129,10 +134,25 @@ export async function trainRecommendForest(): Promise<{
       positives += 1;
     }
 
-    // Negatives: random non-opened domains from the frecency pool.
-    const eligible = negDomains.filter((d) => d !== event.domain);
-    for (let n = 0; n < NEGATIVE_SAMPLES && eligible.length > 0; n++) {
-      const d = eligible[Math.floor(Math.random() * eligible.length)];
+    // Negatives: 1 hard (sequence model's top guess that wasn't opened)
+    // + the rest easy (uniform over the domain population).
+    const negSampled: string[] = [];
+    const hard = seq
+      .topPredictions(focusHistory, hour, ts, 10)
+      .map((p) => p.domain)
+      .find(
+        (d) => d && d !== event.domain && d !== focusedDomain && !d.startsWith('chrome'),
+      );
+    if (hard) negSampled.push(hard);
+    const easyEligible = uniformNegDomains.filter(
+      (d) => d !== event.domain && d !== focusedDomain && !negSampled.includes(d),
+    );
+    while (negSampled.length < NEGATIVE_SAMPLES && easyEligible.length > 0) {
+      const idx = Math.floor(Math.random() * easyEligible.length);
+      negSampled.push(easyEligible[idx]);
+      easyEligible.splice(idx, 1);
+    }
+    for (const d of negSampled) {
       const negFeat = await buildFor(d);
       if (negFeat) {
         X.push(negFeat);

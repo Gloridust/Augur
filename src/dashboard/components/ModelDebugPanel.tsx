@@ -18,8 +18,10 @@ import ForestIcon from '@mui/icons-material/Forest';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import ReplayIcon from '@mui/icons-material/Replay';
 import HubIcon from '@mui/icons-material/Hub';
+import QueryStatsIcon from '@mui/icons-material/QueryStats';
 import type { ModelInspection } from '../../ml/data-ops';
 import {
+  evaluateModel,
   fetchModelInspection,
   rebuildAggregates,
   rebuildSequenceMemory,
@@ -27,6 +29,7 @@ import {
   resetModelsOnly,
   retrainEmbedding,
   retrainForest,
+  type EvalReportData,
 } from '../api/recommendations';
 import { toast } from './Toaster';
 
@@ -337,6 +340,18 @@ export function ModelDebugPanel() {
     }
   };
 
+  const [evalResult, setEvalResult] = useState<EvalReportData | null>(null);
+  const onEvaluate = async () => {
+    setBusy(true);
+    try {
+      const r = await evaluateModel(60);
+      if (r) setEvalResult(r);
+      else toast({ message: t('debug.evaluateFailed'), severity: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onResetModels = async () => {
     setBusy(true);
     try {
@@ -493,6 +508,92 @@ export function ModelDebugPanel() {
             </span>
           </Tooltip>
         </Stack>
+      </Box>
+
+      <Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 500, flex: 1 }}>
+            {t('debug.evaluation')}
+          </Typography>
+          <Tooltip title={t('debug.evaluateTooltip')}>
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<QueryStatsIcon />}
+                onClick={onEvaluate}
+                disabled={busy}
+              >
+                {t('debug.evaluate')}
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+          {t('debug.evaluationHint')}
+        </Typography>
+        {evalResult && (
+          <Card sx={{ p: 2 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              {t('debug.evaluatedOn', {
+                n: evalResult.evaluated,
+                ms: evalResult.tookMs,
+              })}
+            </Typography>
+            <Box
+              component="table"
+              sx={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: 13,
+                '& th, & td': {
+                  textAlign: 'right',
+                  py: 0.5,
+                  px: 1,
+                  borderBottom: '1px solid var(--mui-palette-divider)',
+                },
+                '& th:first-of-type, & td:first-of-type': { textAlign: 'left' },
+              }}
+            >
+              <thead>
+                <tr>
+                  <th>{t('debug.metric')}</th>
+                  <th>{t('debug.modelCol')}</th>
+                  <th>{t('debug.baselineCol')}</th>
+                  <th>Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(['hit1', 'hit3', 'hit5', 'mrr'] as const).map((k) => {
+                  const m = evalResult.model[k];
+                  const b = evalResult.baseline[k];
+                  const delta = m - b;
+                  return (
+                    <tr key={k}>
+                      <td>{k === 'mrr' ? 'MRR' : `hit@${k.slice(3)}`}</td>
+                      <td>{(m * 100).toFixed(1)}%</td>
+                      <td>{(b * 100).toFixed(1)}%</td>
+                      <td
+                        style={{
+                          color:
+                            delta > 0.001
+                              ? 'var(--mui-palette-success-main)'
+                              : delta < -0.001
+                                ? 'var(--mui-palette-error-main)'
+                                : undefined,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {delta >= 0 ? '+' : ''}
+                        {(delta * 100).toFixed(1)}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Box>
+          </Card>
+        )}
       </Box>
 
       <Box>

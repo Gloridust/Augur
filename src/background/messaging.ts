@@ -205,6 +205,11 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         const data = await replayImplicitTraining();
         return { ok: true, kind: 'lr.replay', data };
       }
+      case 'model.evaluate': {
+        const { evaluateRecommend } = await import('../ml/eval');
+        const data = await evaluateRecommend(req.sample ?? 60);
+        return { ok: true, kind: 'model.evaluate', data };
+      }
       case 'stash.add': {
         const data = await stashTabs(req.items);
         await logEvent({

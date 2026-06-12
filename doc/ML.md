@@ -309,7 +309,43 @@ These calls go through [`useGeminiHelpers`](../src/dashboard/hooks/useGeminiHelp
 - LLM logits are not calibrated probabilities.
 - Gemini was trained on the public web, not your specific browsing patterns. Personalization is exactly what it can't provide.
 
-## 14. What's NOT done
+## 14. Mixture negative sampling (v7)
+
+Negative-sample distribution history for `trainImplicitOpen` / the forest dataset builder:
+
+| Era | Distribution | Failure mode |
+|---|---|---|
+| v5 | Top-60 frecency only | Model learned "popular / co-occurring = negative"; `cooccurrenceWithFocused` weight hit −2.0; OracleHint top-1 systematically wrong |
+| v6 | Uniform over `db.domains` | Fixed the shortcut, but all negatives are "easy" — random domains share no context features with the positive. Model learns plausible-vs-random, not which-plausible-one |
+| **v7** | **3 easy (uniform) + 2 hard (sequence model's own top predictions that the user did NOT open)** | Hard negatives share the positive's context profile (high cooccurrence, high seqProb), so only fine-grained feature interplay separates them — exactly the decision boundary the live ranking needs |
+
+When the sequence memory is too young to supply hard negatives, the easy count tops up to keep total negative weight constant (class balance is preserved at pos 1.0 ≈ neg 5 × 0.2).
+
+## 15. Dwell-time feedback (bandit nudges on close)
+
+An open is only half the signal — what happened next tells us whether it was a *good* open. At tab close, [`nudgeRecommendOnClose`](../src/ml/recommend.ts) routes a dwell verdict into the recommend bandit:
+
+- dwelled ≥ 60s → `recordSoftAccept` (+0.3 α) — the open paid off
+- bounced (< 10s focus, never focused) → `recordIgnore` (+0.3 β) — wasted open
+- anything between → no update (ambiguous)
+
+This goes through the bandit, not the LR, because LR features describe the *context at open time*, which is gone by close time — but the bandit is per-domain and context-free, so a close-time nudge is well-defined. Soft accepts deliberately don't increment the `acceptances` counter, which stays reserved for explicit user actions.
+
+## 16. Offline replay evaluation
+
+[`evaluateRecommend`](../src/ml/eval.ts) replays the event log chronologically, reconstructs the focus-history context before each historical open, asks the current model to rank candidates for that context (deterministic mode — bandit posterior mean instead of Thompson sampling), and reports **hit@1 / hit@3 / hit@5 / MRR** against a pure-frecency baseline. Surfaced in Settings → Advanced → "Prediction quality".
+
+Honest caveats, also shown in the UI:
+
+- **Replay, not backtest** — the model has already trained on these events, so absolute numbers are optimistic. The value is in the *delta*: run before and after a model change.
+- Aggregates (domain stats, embeddings, sequence memory) are at their current state, not as-of each event; time-series features ARE computed as-of each event (the snapshot accepts a historical `now`).
+- The baseline comparison answers the question that actually matters: *is the ML stack beating a no-ML frecency sort?* If the Δ column is ever consistently negative, the model is hurting and something is wrong.
+
+## 17. Inference performance
+
+`scoreOpenCandidates` previously cost ~3 IndexedDB range queries per candidate (visit velocity, session context, last-seen URL) × ~100 candidates ≈ 300 queries per new-tab open. [`buildTimeseriesSnapshot`](../src/ml/timeseries.ts) now loads the last 14 days of events **once** and answers all three questions from in-memory maps — 1 bulk query per call, identical semantics (same event-type filters, windows, and caps as the per-domain functions, which remain for low-volume callers like `trainImplicitOpen`).
+
+## 18. What's NOT done
 
 Conscious choices to keep the model surface manageable:
 

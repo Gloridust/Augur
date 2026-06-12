@@ -169,6 +169,24 @@ export async function replayImplicitTraining(): Promise<{
   return r.ok && r.kind === 'lr.replay' ? r.data : null;
 }
 
+export interface EvalMetrics {
+  hit1: number;
+  hit3: number;
+  hit5: number;
+  mrr: number;
+}
+export interface EvalReportData {
+  evaluated: number;
+  skipped: number;
+  model: EvalMetrics;
+  baseline: EvalMetrics;
+  tookMs: number;
+}
+export async function evaluateModel(sample = 60): Promise<EvalReportData | null> {
+  const r = await callRpc({ kind: 'model.evaluate', sample });
+  return r.ok && r.kind === 'model.evaluate' ? r.data : null;
+}
+
 export async function stashItems(items: StashInput[]): Promise<number[]> {
   const r = await callRpc({ kind: 'stash.add', items });
   return r.ok && r.kind === 'stash.add' ? r.data : [];

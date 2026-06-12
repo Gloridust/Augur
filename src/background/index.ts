@@ -11,6 +11,7 @@ import { trainEmbeddingBatch } from '../ml/embedding-train';
 import {
   getSequenceMemory,
   invalidateForestCache,
+  nudgeRecommendOnClose,
   trainImplicitOpen,
 } from '../ml/recommend';
 import { trainRecommendForest } from '../ml/rf-train';
@@ -264,6 +265,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       'model:recommend:v3', // bumped to v4 when seqProbShort/Long/Time were added
       'model:recommend:v4', // bumped to v5 when implicit-train class weights were fixed
       'model:recommend:v5', // bumped to v6 when negative-sample distribution was fixed
+      'model:recommend:v6', // bumped to v7 when mixture (easy+hard) sampling landed
     ];
     let staleDeleted = 0;
     try {
@@ -311,7 +313,7 @@ async function warmupRecommendIfNeeded(): Promise<void> {
   if (warmupAttempted) return;
   warmupAttempted = true;
   try {
-    const recRow = await db.kv.get('model:recommend:v6');
+    const recRow = await db.kv.get('model:recommend:v7');
     const rec = recRow?.value as { trainedSamples?: number } | undefined;
     const trained = rec?.trainedSamples ?? 0;
     if (trained >= WARMUP_MIN_SAMPLES) return;
@@ -620,6 +622,19 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
       now: ts,
     });
     await trainImplicitCleanup({ features, domain: state.domain, closedByUser: true });
+  }
+
+  // Dwell-time feedback for the recommend head: a long-dwelled open was a
+  // good open (soft bandit accept); a bounce (closed in <10s, never
+  // focused) was a wasted open (soft bandit ignore). Window-closing is
+  // included deliberately — dwell time is meaningful regardless of HOW
+  // the tab eventually closed.
+  if (state.domain) {
+    await nudgeRecommendOnClose({
+      domain: state.domain,
+      focusMs: final?.focusMs ?? state.focusMs,
+      focusCount: final?.focusCount ?? state.focusCount,
+    });
   }
 });
 

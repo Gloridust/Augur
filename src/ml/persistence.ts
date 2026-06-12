@@ -12,16 +12,16 @@ import { RandomForest, type ForestState } from './models/randomforest';
 // up via incremental updates.
 // v4 adds two embedding-cluster features (inActiveCluster, clusterStaleness)
 const KV_CLEANUP_MODEL = 'model:cleanup:v4';
-// v5 fixed the class-weight imbalance. v6 fixes the *negative-sample
-// distribution* — v5 sampled negatives from top-frecency domains, which
-// systematically biased weights for `cooccurrenceWithFocused`,
-// `freqDecay`, `visitVelocity` to the wrong sign. The v5 model's spurious
-// weights caused OracleHint to consistently surface the wrong top pick
-// (24 impressions, 0 user acceptances). v6 samples negatives uniformly
-// from `db.domains`. Bumping forces a clean re-fit via the auto-warmup
-// path on update — old bias-baked weights stay parked under the v5 key
-// (deletable via STALE_KEYS cleanup on next update).
-const KV_RECOMMEND_MODEL = 'model:recommend:v6';
+// v5 fixed class-weight imbalance; v6 fixed top-frecency-only negative
+// sampling ("popular = negative" shortcut). v7 switches to MIXTURE
+// sampling — 3 easy (uniform over db.domains) + 2 hard (the sequence
+// model's own top predictions that the user did NOT open). Easy-only
+// negatives (v6) taught the model to separate plausible-vs-random, but
+// the live candidate pool is all-plausible — the product decision is
+// "which of several plausible candidates", and only hard negatives train
+// that boundary. Bumping forces a clean re-fit via auto-warmup on update
+// so no v5/v6-era gradients linger in the Adam state.
+const KV_RECOMMEND_MODEL = 'model:recommend:v7';
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
 const KV_RECOMMEND_FOREST = 'model:recommend:forest:v1';
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';

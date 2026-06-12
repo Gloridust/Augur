@@ -44,6 +44,7 @@ export type RpcRequest =
   | { kind: 'forest.retrain' }
   | { kind: 'sequence.rebuild' }
   | { kind: 'lr.replay' }
+  | { kind: 'model.evaluate'; sample?: number }
   | { kind: 'insights.get' }
   | { kind: 'data.summary' }
   | { kind: 'data.export' }
@@ -99,6 +100,17 @@ export type RpcResponse =
       ok: true;
       kind: 'lr.replay';
       data: { openSamples: number; cleanupSamples: number };
+    }
+  | {
+      ok: true;
+      kind: 'model.evaluate';
+      data: {
+        evaluated: number;
+        skipped: number;
+        model: { hit1: number; hit3: number; hit5: number; mrr: number };
+        baseline: { hit1: number; hit3: number; hit5: number; mrr: number };
+        tookMs: number;
+      };
     }
   | { ok: true; kind: 'workspace.list'; data: Workspace[] }
   | { ok: true; kind: 'workspace.save'; data: number }

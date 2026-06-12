@@ -8,7 +8,11 @@ import type {
 } from '../shared/types';
 import { getDomainStats, getTopDomainsByFrecency } from './aggregate';
 import { getEmbedding } from './embedding-train';
-import { sessionContext as sessionContextFeature, visitVelocity } from './timeseries';
+import {
+  buildTimeseriesSnapshot,
+  sessionContext as sessionContextFeature,
+  visitVelocity,
+} from './timeseries';
 import {
   RECOMMEND_FEATURE_NAMES,
   buildRecommendFeatures,
@@ -148,6 +152,18 @@ export interface RecommendCallContext extends RecommendationContext {
 export async function recommendOpen(
   context: RecommendCallContext,
 ): Promise<OpenCandidate[]> {
+  const ranked = await scoreOpenCandidates(context, { deterministic: false });
+  return ranked.slice(0, MAX_SUGGESTIONS);
+}
+
+// Full scoring path, shared by the live recommender and the offline
+// evaluator. `deterministic: true` replaces Thompson sampling with the
+// bandit's posterior mean — same expected ranking, zero randomness, so
+// repeated evaluation runs are comparable.
+export async function scoreOpenCandidates(
+  context: RecommendCallContext,
+  opts: { deterministic?: boolean; now?: number } = {},
+): Promise<OpenCandidate[]> {
   const model = await getModel();
   const bandit = await getBandit();
   const embedding = await getEmbedding();
@@ -199,7 +215,13 @@ export async function recommendOpen(
 
   const openSet = new Set(context.openDomains);
   const pinnedSet = new Set(context.pinnedDomains ?? []);
-  const now = Date.now();
+  const now = opts.now ?? Date.now();
+
+  // One bulk events load answers visit-velocity, session-context, AND
+  // last-seen-url/title for every candidate. The previous per-candidate
+  // pattern cost ~3 IndexedDB range queries × pool size (≈240 queries per
+  // new-tab open); this is 1 query + in-memory maps.
+  const snapshot = await buildTimeseriesSnapshot(now);
 
   const candidates: OpenCandidate[] = [];
   for (let i = 0; i < pool.length; i++) {
@@ -208,10 +230,8 @@ export async function recommendOpen(
     const embedSim = context.focusedDomain
       ? embedding.cosine(stat.domain, context.focusedDomain)
       : 0;
-    const [vel, sess] = await Promise.all([
-      visitVelocity(stat.domain, now),
-      sessionContextFeature(stat.domain, now),
-    ]);
+    const vel = snapshot.velocityOf(stat.domain);
+    const sess = snapshot.sessionOf(stat.domain);
     // Three sequence-memory probabilities — short / long / time-of-day.
     // The LR head learns the optimal mix per user.
     const seqProbShort = seq.predictShort(focusHistory, stat.domain, now);
@@ -240,7 +260,11 @@ export async function recommendOpen(
     const baseScore = forestReady
       ? 0.5 * lrScore + 0.5 * forest.predict(xVec)
       : lrScore;
-    const banditMul = bandit.sample(banditArmId(stat.domain));
+    // Live path: Thompson sampling for exploration. Evaluator path:
+    // posterior mean, so runs are deterministic and comparable.
+    const banditMul = opts.deterministic
+      ? bandit.meanAccept(banditArmId(stat.domain))
+      : bandit.sample(banditArmId(stat.domain));
     let score = baseScore * (0.5 + banditMul);
     // During cold start the model and the bandit are both basically uniform,
     // so blend in topSites' own popularity order to give a sensible default.
@@ -248,7 +272,10 @@ export async function recommendOpen(
       const positionBoost = 1 - i / Math.max(pool.length, 1);
       score = score * 0.4 + positionBoost * 0.6;
     }
-    const last = await lastEventForDomain(stat.domain);
+    // Last-seen lookup from the snapshot covers any domain active in the
+    // last 14 days; fall back to the indexed per-domain query only for
+    // long-dormant domains that the frecency pool still surfaces.
+    const last = snapshot.lastSeenOf(stat.domain) ?? (await lastEventForDomain(stat.domain));
     const url = last.url ?? `https://${stat.domain}`;
     const title = last.title ?? fallbackTitle(url, stat.domain);
     const reason = isColdStart && features.freqDecay <= 0.5
@@ -264,7 +291,7 @@ export async function recommendOpen(
     });
   }
   candidates.sort((a, b) => b.score - a.score);
-  return candidates.slice(0, MAX_SUGGESTIONS);
+  return candidates;
 }
 
 export async function recordRecommendImpressions(
@@ -369,27 +396,31 @@ export async function trainImplicitOpen(
   // Class weights are balanced — total positive weight (1.0) ≈ total
   // negative weight (5 × 0.2 = 1.0).
   //
-  // ── Negative-sample distribution fix ──────────────────────────────
-  // The previous version sampled negatives from `getTopDomainsByFrecency(60)`,
-  // which created a systematic bias: top-frecency domains tend to have
-  // (a) high co-occurrence with whatever's focused, (b) high visit velocity,
-  // (c) high embed similarity. So the LR effectively learned "popular
-  // domain features = negative" — flipping cooccurrence/velocity/freqDecay
-  // weights to negative. At scoring time, the user's actual workflow
-  // partners (which by definition co-occur with the focused tab) got
-  // ranked DOWN, while the top-1 was always some edge-case candidate.
-  // OracleHint showed lots of impressions but 0% acceptance because the
-  // top pick was systematically wrong.
-  //
-  // Fix: sample negatives UNIFORMLY from `db.domains`. The frequency
-  // distribution of negatives now matches the population, not the
-  // top-tail, so the model can't learn "frecency = negative" or
-  // "co-occurrence = negative" as a spurious shortcut.
+  // ── Mixture negative sampling: 3 easy + 2 hard ─────────────────────
+  // History of this code path:
+  //   v5: negatives from top-frecency only → model learned "popular /
+  //       co-occurring = negative" (spurious shortcut), OracleHint top-1
+  //       was systematically wrong.
+  //   v6: negatives uniform over db.domains → fixed the shortcut, but
+  //       all negatives became "easy" (random domains share almost no
+  //       context features with the positive). Easy-only negatives teach
+  //       the model to separate plausible-vs-random — NOT to pick the
+  //       right one among several plausible candidates, which is the
+  //       actual product decision (the candidate pool is all-plausible).
+  //   Now: a mixture. Easy negatives (uniform) keep calibration honest
+  //       and block popularity shortcuts in both directions; hard
+  //       negatives (drawn from the sequence-memory's own top predictions
+  //       for this context, minus what was actually opened) share the
+  //       positive's context profile — high cooccurrence, high seqProb —
+  //       so the only signal separating them from the positive is the
+  //       fine-grained feature interplay. That's exactly the decision
+  //       boundary OracleHint needs.
   //
   // Also exclude the focused domain — it would otherwise be sampled as
   // a negative (since user just navigated FROM it, not TO it), which is
   // a noisy label.
-  const NEG_COUNT = 5;
+  const EASY_NEG_COUNT = 3;
+  const HARD_NEG_COUNT = 2;
   const POS_WEIGHT = 1.0;
   const NEG_WEIGHT = 0.2;
 
@@ -397,11 +428,29 @@ export async function trainImplicitOpen(
   const posFeatures = await buildFor(event.domain, true);
   model.update(vectorFromRecommend(posFeatures), 1, POS_WEIGHT);
 
-  // Negative samples — uniform random over the entire domain population,
-  // not biased toward popular domains.
-  const allDomains = await db.domains.toArray();
   const exclude = new Set<string>([event.domain]);
   if (focusedDomain) exclude.add(focusedDomain);
+
+  // Hard negatives: the sequence model's best guesses for this context
+  // that the user did NOT open. These are the candidates the recommender
+  // itself would have surfaced — training against them directly sharpens
+  // the live ranking.
+  const hardCandidates = seq
+    .topPredictions(focusHistory, hour, event.ts, 10)
+    .map((p) => p.domain)
+    .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'))
+    .slice(0, HARD_NEG_COUNT);
+  for (const domain of hardCandidates) {
+    exclude.add(domain); // don't re-sample as easy
+    const negFeatures = await buildFor(domain, openDomains.includes(domain));
+    model.update(vectorFromRecommend(negFeatures), 0, NEG_WEIGHT);
+  }
+
+  // Easy negatives: uniform random over the entire domain population.
+  // Top up to keep total negative weight constant when the sequence
+  // memory is too young to supply hard negatives.
+  const easyTarget = EASY_NEG_COUNT + (HARD_NEG_COUNT - hardCandidates.length);
+  const allDomains = await db.domains.toArray();
   const eligible = allDomains
     .map((d) => d.domain)
     .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'));
@@ -409,7 +458,7 @@ export async function trainImplicitOpen(
     // Fisher-Yates partial shuffle for unbiased sampling without replacement.
     const sampled: string[] = [];
     const pool = eligible.slice();
-    const k = Math.min(NEG_COUNT, pool.length);
+    const k = Math.min(easyTarget, pool.length);
     for (let i = 0; i < k; i++) {
       const j = i + Math.floor(Math.random() * (pool.length - i));
       [pool[i], pool[j]] = [pool[j], pool[i]];
@@ -426,6 +475,33 @@ export async function trainImplicitOpen(
 
 export function clearSequenceMemoryCache(): void {
   cachedSeq = null;
+}
+
+// Dwell-time feedback — called from the SW's tab-close handler. An open is
+// only HALF the signal; what happened next tells us whether it was a good
+// open. We route this through the bandit (per-domain posterior) rather than
+// the LR because the LR's features describe the *context at open time*,
+// which is long gone by close time — but the bandit is context-free, so a
+// close-time nudge is well-defined:
+//   - dwelled ≥ 60s            → soft accept (+0.3 α): the open paid off
+//   - bounced (< 10s, 0 focus) → soft ignore (+0.3 β): the open was a miss
+// Anything in between is ambiguous and gets no nudge.
+export async function nudgeRecommendOnClose(args: {
+  domain: string;
+  focusMs: number;
+  focusCount: number;
+}): Promise<void> {
+  const { domain, focusMs, focusCount } = args;
+  if (!domain || domain.startsWith('chrome')) return;
+  const bandit = await getBandit();
+  if (focusMs >= 60_000) {
+    bandit.recordSoftAccept(banditArmId(domain), 0.3);
+  } else if (focusMs < 10_000 && focusCount === 0) {
+    bandit.recordIgnore(banditArmId(domain), 0.3);
+  } else {
+    return; // ambiguous dwell — no update, skip the save
+  }
+  await saveBandit('recommend', bandit);
 }
 
 export function clearRecommendCaches(): void {
