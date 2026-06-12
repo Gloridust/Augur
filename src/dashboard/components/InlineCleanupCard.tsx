@@ -24,6 +24,7 @@ import {
   stashItems,
 } from '../api/recommendations';
 import { notifyStashChanged } from './StashSection';
+import { isCleanupSuppressed, suppressCleanup } from '../cleanupSuppression';
 import { toast } from './Toaster';
 
 function fmtDuration(ms: number, t: (k: string, opts?: Record<string, unknown>) => string): string {
@@ -55,7 +56,9 @@ export function InlineCleanupCard() {
 
   const refresh = useCallback(async () => {
     const data = await fetchCleanupRecommendations();
-    setItems(data);
+    // Drop any tab the user already chose to keep this session — the model
+    // hasn't changed its mind yet, but the user's explicit "keep" wins.
+    setItems(data.filter((c) => !isCleanupSuppressed(c.tab.id, c.tab.url)));
   }, []);
 
   useEffect(() => {
@@ -96,8 +99,13 @@ export function InlineCleanupCard() {
 
   const onDismiss = async (c: CleanupCandidate) => {
     const domain = extractDomain(c.tab.url);
-    await reportCleanupFeedback(domain, c.reason, c.features, 'dismissed');
+    // "Keep" = explicit, immediate intent. Suppress this tab from BOTH
+    // cleanup surfaces for the session (broadcasts so TabWall drops it
+    // from its coral-glow batch too) so it can't be closed by a later
+    // "关闭所选", and won't reappear in this card on the next refresh.
+    suppressCleanup(c.tab.id, c.tab.url);
     removeLocal(c.tab.id);
+    await reportCleanupFeedback(domain, c.reason, c.features, 'dismissed');
   };
 
   const onStash = async (c: CleanupCandidate) => {

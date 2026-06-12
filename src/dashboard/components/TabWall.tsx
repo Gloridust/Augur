@@ -36,6 +36,7 @@ import { extractDomain } from '../../shared/db';
 import type { CleanupCandidate } from '../../shared/types';
 import { usePins } from '../hooks/usePins';
 import { notifyStashChanged } from './StashSection';
+import { isCleanupSuppressed, onCleanupSuppressed } from '../cleanupSuppression';
 import { InlineCleanupCard } from './InlineCleanupCard';
 import { toast } from './Toaster';
 
@@ -267,6 +268,8 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
         const candidateIds = new Set<number>();
         for (const c of candidates) {
           if (c.score < AUTO_SELECT_THRESHOLD) continue;
+          // Never auto-select a tab the user explicitly kept this session.
+          if (isCleanupSuppressed(c.tab.id, c.tab.url)) continue;
           if (c.tab.id !== undefined && openIds.has(c.tab.id)) {
             map.set(c.tab.id, c);
             candidateIds.add(c.tab.id);
@@ -354,6 +357,28 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
       return changed ? next : prev;
     });
   }, [tabs]);
+
+  // When the user keeps a tab in the InlineCleanupCard, that tab must
+  // immediately drop out of this batch too — otherwise "关闭所选" would
+  // still close it (the exact bug this coordination fixes). No feedback is
+  // logged here: InlineCleanupCard already recorded the 'dismissed' signal.
+  useEffect(() => {
+    return onCleanupSuppressed(({ tabId }) => {
+      if (tabId === undefined) return;
+      setAiSelected((prev) => {
+        if (!prev.has(tabId)) return prev;
+        const next = new Map(prev);
+        next.delete(tabId);
+        return next;
+      });
+      setSelected((prev) => {
+        if (!prev.has(tabId)) return prev;
+        const next = new Set(prev);
+        next.delete(tabId);
+        return next;
+      });
+    });
+  }, []);
 
   // Auto-run #2: every time the dashboard becomes visible (user switches
   // back to this tab). Skipped when:
