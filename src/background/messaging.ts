@@ -19,10 +19,26 @@ import { trainEmbeddingBatch } from '../ml/embedding-train';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
 import { buildInsights, buildTodayRecap } from '../ml/insights';
 import {
+  invalidateForestCache,
+  mlpStatus,
   recommendOpen,
   recordRecommendImpressions,
+  setMlpEnabled,
   trainRecommendFeedback,
 } from '../ml/recommend';
+import {
+  rebuildSequenceMemory,
+  replayImplicitTraining,
+  trainRecommendForest,
+} from '../ml/rf-train';
+// Static imports for the on-demand model tools. These were `await import(...)`
+// before, which made eval.ts a separate chunk loaded via a dynamic `import()`
+// at runtime — and dynamic import() inside a service worker triggered Vite's
+// DOM-based preload machinery ("document is not defined" on Run evaluation /
+// backtest). Folding them into the SW's static graph removes every runtime
+// import() from the worker. There's no circular dependency through messaging.
+import { evaluateRecommend } from '../ml/eval';
+import { loadEvalHistory } from '../ml/persistence';
 import { rerankPins } from '../ml/pins';
 import {
   deleteStashed,
@@ -192,24 +208,19 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         return { ok: true, kind: 'embedding.retrain', data };
       }
       case 'forest.retrain': {
-        const { trainRecommendForest } = await import('../ml/rf-train');
-        const { invalidateForestCache } = await import('../ml/recommend');
         const data = await trainRecommendForest();
         invalidateForestCache();
         return { ok: true, kind: 'forest.retrain', data };
       }
       case 'sequence.rebuild': {
-        const { rebuildSequenceMemory } = await import('../ml/rf-train');
         const data = await rebuildSequenceMemory();
         return { ok: true, kind: 'sequence.rebuild', data };
       }
       case 'lr.replay': {
-        const { replayImplicitTraining } = await import('../ml/rf-train');
         const data = await replayImplicitTraining();
         return { ok: true, kind: 'lr.replay', data };
       }
       case 'model.evaluate': {
-        const { evaluateRecommend } = await import('../ml/eval');
         const data = await evaluateRecommend({
           sample: req.sample ?? 60,
           mode: req.mode ?? 'replay',
@@ -219,16 +230,13 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         return { ok: true, kind: 'model.evaluate', data };
       }
       case 'model.evalHistory': {
-        const { loadEvalHistory } = await import('../ml/persistence');
         const data = await loadEvalHistory();
         return { ok: true, kind: 'model.evalHistory', data };
       }
       case 'model.mlpStatus': {
-        const { mlpStatus } = await import('../ml/recommend');
         return { ok: true, kind: 'model.mlpStatus', data: await mlpStatus() };
       }
       case 'model.setMlp': {
-        const { setMlpEnabled } = await import('../ml/recommend');
         await setMlpEnabled(req.enabled);
         return { ok: true, kind: 'model.setMlp', data: { enabled: req.enabled } };
       }
