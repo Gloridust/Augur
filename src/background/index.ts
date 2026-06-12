@@ -89,7 +89,9 @@ function nowParts(): { ts: number; hourOfDay: number; dayOfWeek: number } {
 }
 
 const SESSION_GAP_MS = 30 * 60 * 1000;
-const RECENT_FOCUS_MS = 15 * 60 * 1000;
+// 2 min (was 15) — see the switch-filter note in recommend.ts. Only filters
+// rapid duplicate opens; legitimate returns to a recently-used domain now count.
+const RECENT_FOCUS_MS = 2 * 60 * 1000;
 const SESSION_KEY = 'augur:session'; // { startTs, lastEventTs }
 
 async function touchSession(now: number): Promise<number> {

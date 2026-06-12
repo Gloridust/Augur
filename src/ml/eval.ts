@@ -52,7 +52,11 @@ interface TestPoint {
 
 const FOCUS_HISTORY_MAX = 8;
 const SESSION_GAP_MS = 30 * 60 * 1000;
-const RECENT_FOCUS_MS = 15 * 60 * 1000;
+// 2 min (was 15): only guards against rapid duplicate opens of a domain you
+// were literally just on. A 15-min window wrongly excluded legitimate returns
+// (e.g. back to GitHub after a few minutes on Slack) — those ARE new-intent
+// switches and predictable. See the switch-filter note in recommend.ts.
+const RECENT_FOCUS_MS = 2 * 60 * 1000;
 
 function emptyAcc() {
   return { hits1: 0, hits3: 0, hits5: 0, rrSum: 0, inPool: 0 };

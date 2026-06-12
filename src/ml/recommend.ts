@@ -544,11 +544,18 @@ export async function trainImplicitOpen(
   const openDomains = ctx?.openDomains ?? [];
 
   // ── Phase 1.1: switch-event filter ────────────────────────────────
-  // The product predicts SWITCHES (new-intent opens), and both the
-  // evaluator and the live recommender skip self-transitions. Training on
-  // same-domain continuation browsing trains a different question than we
-  // ask. Skip when the opened domain is the one already focused, or was
-  // focused/opened within the past 15 min.
+  // The product predicts what to OPEN next, so it trains only on open/navigate
+  // (focus events — switching between already-open tabs — feed context, not
+  // positives). Two guards:
+  //   1. Skip the domain already focused: predicting the page you're on is
+  //      useless, and same-domain SPA navigation lands here too.
+  //   2. Skip a domain opened in the last RECENT_FOCUS_MS: a rapid duplicate
+  //      open, not new intent.
+  // (2) used to be a 15-min window, which over-reached: returning to GitHub
+  // after a few minutes on Slack is a genuine, predictable switch, not a
+  // duplicate. Shrunk to 2 min so legitimate returns count as training and
+  // prediction targets — high-frequency work switching is exactly what we
+  // want to learn.
   if (event.domain === focusedDomain) return;
   if (ctx?.recentlyFocusedDomains?.includes(event.domain)) return;
 

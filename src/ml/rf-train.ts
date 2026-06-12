@@ -41,7 +41,7 @@ const NEGATIVE_SAMPLES = 3;     // per positive
 const HISTORY_LOOKBACK = 8;     // how many prior focuses to use as history per event
 const POSITIVE_LOOKBACK_DAYS = 30;
 const SESSION_GAP_MS = 30 * 60 * 1000;     // >30min event gap = new session
-const RECENT_FOCUS_MS = 15 * 60 * 1000;    // switch-event lookback (Phase 1.1)
+const RECENT_FOCUS_MS = 2 * 60 * 1000;     // switch-event lookback (Phase 1.1; 15→2min, see recommend.ts)
 const SESSION_DEDUP_MS = 30 * 60 * 1000;   // ≤1 positive per (domain, window)
 
 // Engagement × openedFrom sample weight (Phase 1.3 + 1.4). `focusMs` is the
