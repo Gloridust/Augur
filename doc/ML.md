@@ -345,7 +345,35 @@ Honest caveats, also shown in the UI:
 
 `scoreOpenCandidates` previously cost ~3 IndexedDB range queries per candidate (visit velocity, session context, last-seen URL) × ~100 candidates ≈ 300 queries per new-tab open. [`buildTimeseriesSnapshot`](../src/ml/timeseries.ts) now loads the last 14 days of events **once** and answers all three questions from in-memory maps — 1 bulk query per call, identical semantics (same event-type filters, windows, and caps as the per-domain functions, which remain for low-volume callers like `trainImplicitOpen`).
 
-## 18. What's NOT done
+## 18. The v8 round — ranking objective, directional + session features, decision layer
+
+Model `recommend:v8` bundles Phases 0–4 of [UPGRADE-PLAN.md](UPGRADE-PLAN.md). The structural changes:
+
+**Training distribution (Phase 1).** `trainImplicitOpen` now trains ONLY on switch-events — an opened domain that ≠ the focused one AND wasn't focused in the past 15 min. Same-domain continuation browsing no longer floods the gradient stream; the model is trained on the question it's asked (the evaluator and live recommender both already skip self-transitions). Positives are session-deduped (≤1 per domain per 30 min) and weighted by engagement (forward dwell-join: `clip(log1p(focusMs/30s), 0.5, 2)`) × `openedFrom` intent (direct 1.2 / link 0.8).
+
+**Ranking objective (Phase 2.1).** [`OnlineLogReg.updateGroup`](../src/ml/models/logreg.ts) replaces pointwise binary updates with group-wise sampled softmax: the {positive + 5 mixture negatives} form one group, softmax over their logits, and one Adam step pushes the positive's probability up relative to the rest — directly optimizing the ranking decision the UI makes. The Platt calibrator still runs per-sample (binary labels, post-step logits) so the thresholded probability stays meaningful while ranking drives the weights.
+
+**8 new features (v8).** `transitionAffinity` (directed `sigmoid(inVec[from]·outVec[to])` from the skip-gram's separate in/out tables — A→B ≠ B→A); `sessionSim` + `sessionCohesion` (cosine to a positional-decayed session centroid + how tight the session cluster is — the recommend head's first multi-tab context); `minutesIntoSession` + `isSessionStart` (first-tab vs mid-session intent); `hourActivityZ` (z-score of the hour against the user's OWN rhythm, [`circadian.ts`](../src/ml/circadian.ts)); `banditLogit` (the per-domain acceptance posterior as a learned feature — Phase 4.1, replacing the old multiplicative blend); `prefixConcentration` ([`urlprefix.ts`](../src/ml/urlprefix.ts)).
+
+**Decision layer (Phase 4).** The hard-coded `score × (0.5 + bandit)` is gone — the bandit is a feature both models learn to weight. Live scoring adds small additive exploration jitter that decays with arm impressions. OracleHint gained a margin gate (top1−top2 ≥ 0.08) to kill the "can't separate #1 from #2" false-fire. Predictions surface the domain's top URL **prefix** (`github.com/you/repo`) instead of the bare domain.
+
+**Candidate generation (Phase 3.4).** The pool (frecency top-80) is expanded with sequence-memory top transitions + embedding-NN of the focused domain + embedding-NN of the session centroid, capped at 120. `recall@pool` in the evaluator measures whether the target was even rankable.
+
+**Measurement (Phase 0).** [`eval.ts`](../src/ml/eval.ts) gained `recall@pool`, a persisted eval-history ring (`evalHistory:v1`), and a true backtest mode — train a fresh LR on events older than the split, evaluate on newer ones it never saw. Replay numbers are leakage-optimistic; the backtest number is the honest generalization signal. **No change ships without a backtest delta.**
+
+## 19. Semantic layer, factorized transitions, neural head (v8 extended)
+
+Three more subsystems landed in v8 beyond the Phase 0–4 core:
+
+**Semantic text embeddings (ID → meaning).** The stack historically modeled browsing as a stream of domain IDs — every (A→B) pair learned independently, unfillable at 300 domains. [`textembed.ts`](../src/ml/textembed.ts) embeds each page's title + URL words via the hashing trick (word unigrams + char trigrams → 48-dim signed-hash, L2-normalized — deterministic, no model file, no network). [`domaintext.ts`](../src/ml/domaintext.ts) keeps a running per-domain mean vector. Two features — `titleSimToFocused`, `titleSimToSession` — give the model genuine text similarity: domains never co-visited but whose pages share vocabulary ("invoice", "pull request") now land near each other, which the co-occurrence skip-gram structurally cannot. This is the on-device down-payment on the semantic paradigm; a pretrained sentence model would be better but needs an external asset (see [NEXT-PARADIGM.md](NEXT-PARADIGM.md)).
+
+**Factorized transition model (Phase 2.3).** [`models/transition.ts`](../src/ml/models/transition.ts) learns per-domain u (as-context) and v (as-target) 16-dim vectors; score(from→to) = sigmoid(u_from·v_to + b_to), trained online with sampled softmax. Unlike the sequence-memory COUNTS (which need the exact pair observed), the factorization GENERALIZES across similar contexts. Used as the `factorizedTransition` feature AND a candidate generator (`topNext`), directly improving recall@pool.
+
+**Tiny wide-&-deep MLP (Phase 5, opt-in).** [`models/mlp.ts`](../src/ml/models/mlp.ts) — one tanh hidden layer (16 units), hand-written backprop, same group-softmax objective as the LR, ~600 params. It trains in the background on every group but is **OFF by default**: the live ensemble stays LR+RF until the user enables it (Settings → Advanced toggle) after a backtest confirms it helps. Honors the plan's contingency rule — built and trainable so it's verifiable, dormant until earned.
+
+**Final-score calibration (Phase 4.2 complete).** [`blendcalib.ts`](../src/ml/blendcalib.ts) fits a 2-param Platt layer over the blended ensemble score against realized outcomes (`oracle_shown` → opened-within-5-min, joined from the event log), retrained in the nightly alarm. OracleHint thresholds on a genuinely calibrated probability; the transform is monotonic so ranking is unchanged.
+
+## 20. What's NOT done
 
 Conscious choices to keep the model surface manageable:
 
