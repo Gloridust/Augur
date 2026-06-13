@@ -1,6 +1,7 @@
 import type {
   CleanupCandidate,
   CleanupFeatures,
+  CleanupSweep,
   DataSummary,
   OpenCandidate,
   RecommendFeatures,
@@ -19,6 +20,7 @@ export type RpcRequest =
   | { kind: 'recommend.open' }
   | { kind: 'recommend.cleanup' }
   | { kind: 'recommend.cleanup.all'; limit?: number }
+  | { kind: 'cleanup.sweep' }
   | {
       kind: 'feedback.cleanup';
       domain: string;
@@ -82,6 +84,7 @@ export type RpcResponse =
   | { ok: true; kind: 'recommend.open'; data: OpenCandidate[] }
   | { ok: true; kind: 'recommend.cleanup'; data: CleanupCandidate[] }
   | { ok: true; kind: 'recommend.cleanup.all'; data: CleanupCandidate[] }
+  | { ok: true; kind: 'cleanup.sweep'; data: CleanupSweep }
   | { ok: true; kind: 'insights.get'; data: InsightsBundle }
   | { ok: true; kind: 'data.summary'; data: DataSummary }
   | { ok: true; kind: 'data.export'; data: DataDump }

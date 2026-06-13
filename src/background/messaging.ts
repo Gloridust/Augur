@@ -1,5 +1,6 @@
 import { rebuildFromEvents } from '../ml/aggregate';
 import {
+  cleanupSweep,
   recordCleanupImpressions,
   scoreCleanupCandidates,
   trainCleanupFeedback,
@@ -136,9 +137,15 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         // Hard ceiling at 50 to avoid pathological cases.
         const tabs = await chrome.tabs.query({});
         const cap = Math.min(req.limit ?? 50, 50);
-        const data = await scoreCleanupCandidates(tabs, Date.now(), cap);
+        const data = await scoreCleanupCandidates(tabs, Date.now(), { bulk: true, limit: cap });
         await recordCleanupImpressions(data);
         return { ok: true, kind: 'recommend.cleanup.all', data };
+      }
+      case 'cleanup.sweep': {
+        const tabs = await chrome.tabs.query({});
+        const data = await cleanupSweep(tabs);
+        await recordCleanupImpressions(data.candidates);
+        return { ok: true, kind: 'cleanup.sweep', data };
       }
       case 'feedback.cleanup': {
         await trainCleanupFeedback(req.features, req.domain, req.reason, req.action);

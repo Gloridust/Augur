@@ -1,5 +1,10 @@
 import { db, extractDomain } from '../shared/db';
-import type { CleanupCandidate, CleanupFeatures } from '../shared/types';
+import type {
+  CleanupCandidate,
+  CleanupFeatures,
+  CleanupSweep,
+  CleanupTier,
+} from '../shared/types';
 import { getIdleState, getStateMap } from '../background/state';
 import { getDomainStats } from './aggregate';
 import { clusterByEmbedding, type ClusterMember } from './cluster';
@@ -25,6 +30,40 @@ const MIN_TAB_AGE_FOR_SUGGEST_MS = 30 * 60 * 1000;
 const MAX_SUGGESTIONS = 5;
 const SCORE_THRESHOLD = 0.55;
 
+// ── Bulk-sweep staleness rules (Phase: cleanup overhaul) ──────────────────
+// The LR head is calibrated for PRECISION — it only flags ~5 tabs it's very
+// sure about (86% real accept rate). But heavy tab-hoarders sit on 50-100
+// open tabs, almost all stale, and the precise head can't surface them all.
+// The bulk sweep is a REVIEW surface (the user deselects before closing), so
+// recall matters more than precision: include anything that trips a simple,
+// explainable staleness rule, regardless of the model score, and let the
+// user uncheck the few keepers.
+const STALE_HOURS_FLOOR = 2; // not focused in ≥2h → eligible for the sweep
+const SWEEP_CAP = 200; // hard ceiling so a pathological 500-tab window stays bounded
+
+const TIER_RANK: Record<CleanupTier, number> = {
+  never_opened: 0,
+  stale_week: 1,
+  stale_day: 2,
+  stale: 3,
+  model: 4,
+};
+
+// Classify how obviously a tab is a zombie from its features alone.
+// `modelFlagged` lets a model-confident tab that trips no staleness rule
+// still appear in the sweep under the 'model' tier. Returns null when the
+// tab is fresh enough that it shouldn't be in the sweep at all.
+function classifyTier(features: CleanupFeatures, modelFlagged: boolean): CleanupTier | null {
+  // Respect explicit user intent — a named tab group is a deliberate bucket.
+  if (features.isInNamedGroup) return modelFlagged ? 'model' : null;
+  const hrs = features.timeSinceFocusMs / 3_600_000;
+  if (features.focusCount === 0) return 'never_opened'; // age floor enforced by caller
+  if (hrs >= 24 * 7) return 'stale_week';
+  if (hrs >= 24) return 'stale_day';
+  if (hrs >= STALE_HOURS_FLOOR) return 'stale';
+  return modelFlagged ? 'model' : null;
+}
+
 let cachedModel: OnlineLogReg | null = null;
 let cachedBandit: BetaBandit | null = null;
 
@@ -45,8 +84,10 @@ function banditArmId(domain: string, reason: string): string {
 export async function scoreCleanupCandidates(
   tabs: chrome.tabs.Tab[],
   now: number = Date.now(),
-  limit: number = MAX_SUGGESTIONS,
+  opts: { limit?: number; bulk?: boolean } = {},
 ): Promise<CleanupCandidate[]> {
+  const bulk = opts.bulk ?? false;
+  const limit = opts.limit ?? (bulk ? SWEEP_CAP : MAX_SUGGESTIONS);
   if (tabs.length === 0) return [];
   const model = await getModel();
   const bandit = await getBandit();
@@ -217,12 +258,41 @@ export async function scoreCleanupCandidates(
     const baseScore = model.predict(vectorFromCleanup(features));
     const reason = summarizeCleanupReason(features);
     const banditMul = bandit.sample(banditArmId(domain, reason));
-    const score = baseScore * (0.5 + banditMul);
-    candidates.push({ tab, features, score: clamp(score, 0, 1), reason });
+    const score = clamp(baseScore * (0.5 + banditMul), 0, 1);
+    const modelFlagged = score >= SCORE_THRESHOLD;
+    const tier = classifyTier(features, modelFlagged);
+    candidates.push({ tab, features, score, reason, tier: tier ?? undefined });
   }
 
+  if (bulk) {
+    // Review surface: everything that tripped a staleness rule (or the
+    // model), most-obviously-a-zombie first. Within a tier, the longest-idle
+    // tabs lead so a "select the top N" gesture closes the safest ones.
+    return candidates
+      .filter((c) => c.tier != null)
+      .sort((a, b) => {
+        const r = TIER_RANK[a.tier!] - TIER_RANK[b.tier!];
+        if (r !== 0) return r;
+        return b.features.timeSinceFocusMs - a.features.timeSinceFocusMs;
+      })
+      .slice(0, limit);
+  }
+
+  // Precise inline path — only what the model is confident about, by score.
   candidates.sort((a, b) => b.score - a.score);
   return candidates.filter((c) => c.score >= SCORE_THRESHOLD).slice(0, limit);
+}
+
+// Bulk declutter sweep — the full stale population (not the precise top-5),
+// each tagged with a staleness tier, plus the totals the UI needs to say
+// "N of M tabs are stale". This is what powers the dedicated declutter UI;
+// the inline card keeps using the precise path.
+export async function cleanupSweep(
+  tabs: chrome.tabs.Tab[],
+  now: number = Date.now(),
+): Promise<CleanupSweep> {
+  const candidates = await scoreCleanupCandidates(tabs, now, { bulk: true });
+  return { candidates, totalTabs: tabs.length, staleTabs: candidates.length };
 }
 
 export async function recordCleanupImpressions(

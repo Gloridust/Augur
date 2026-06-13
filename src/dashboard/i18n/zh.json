@@ -258,9 +258,7 @@
     "tabAi": "AI",
     "tabData": "数据与隐私",
     "tabAdvanced": "高级",
-
     "predictionsSubtitle": "本地运行、确定性算法，所有浏览器都可用。",
-
     "aiReadyTitle": "本地 AI 已就绪",
     "aiReadyBody": "通过 Chrome 内置 Gemini Nano 在本机运行。对话内容不离开你的设备。",
     "aiDownloadableTitle": "本地 AI 可用",
@@ -272,26 +270,21 @@
     "aiAssistant": "工具栏 AI 助手",
     "aiAssistantHint": "在顶栏添加一个聊天按钮，由本地 Gemini Nano 驱动。对话保留在本机，闲置 30 分钟后清除。",
     "aiPrivacyNote": "所有 AI 都在本机运行，不向任何服务器发送数据。**预测和排序永远不由 AI 生成**——无论是否启用 AI，它们都保持 100% 确定性。",
-
     "profile": "问候",
     "userName": "显示名称",
     "userNameHint": "出现在顶部问候语中。留空则不显示。",
     "userNamePlaceholder": "你的名字",
-
     "predictionsTitle": "预测建议",
     "oracleHint": "新标签页显示预测胶囊",
     "oracleHintHint": "当 Augur 对你接下来要打开的页面有较高把握时，会在新标签页顶部弹出一个小胶囊，给出最多三个候选。←/→ 切换、Enter 打开、Esc 关闭。",
     "smartPinSort": "智能排序置顶项",
     "smartPinSortHint": "按你的时段习惯重排置顶行。手动拖动后 6 小时内暂停，避免刚调好就被打乱。",
-
     "geminiTitle": "本地 AI 文案助手",
     "geminiHelpers": "智能命名与摘要",
     "geminiHelpersHint": "为保存的工作区等生成简短文本建议。默认关闭。",
     "geminiHelpersUnavailable": "当前浏览器不支持。需要 Chrome 138 或更高版本，且本机能运行 Gemini Nano。关闭它不影响预测准确度。",
-
     "appearance": "外观",
     "theme": "主题",
-
     "dataTitle": "你的数据",
     "dataSummary": "所有数据保留在本机，不会上传到任何服务器。",
     "events": "事件",
@@ -301,7 +294,6 @@
     "never": "—",
     "cleanupTraining": "清理模型训练（总 / 正）",
     "recommendTraining": "推荐模型训练（总 / 正）",
-
     "backupTitle": "备份与迁移到其他设备",
     "backupSubtitle": "一个文件包含全部——保存的内容、完整事件历史、以及你训练好的模型，让新设备立刻和这台一样聪明。",
     "export": "导出全部数据",
@@ -312,19 +304,16 @@
     "importBadFile": "该文件不是有效的 JSON。",
     "importNotBackup": "这不是 Augur 备份文件。请使用「导出全部数据」生成的文件。",
     "importFailed": "导入失败,请重试。",
-
     "toolsTitle": "其他工具",
     "debugExport": "开发者诊断包",
     "debugExportTooltip": "一个 ZIP(拆分文件 + 结构说明),用于向开发者反馈模型问题时附上。**包含你的完整浏览历史**。",
     "debugExportDone": "诊断包已保存（{{size}} KB）。",
     "debugExportFailed": "诊断包生成失败，请重试。",
-
     "historyBootstrap": "从浏览器历史导入",
     "historyBootstrapTooltip": "这是冷启动工具,**不是还原**:把过去 30 天的 Chrome 历史回放进 Augur,让全新安装有数据可学。如果你有 Augur 备份,请改用「导入数据」。首次安装时自动跑过一次。",
     "historyBootstrapDone": "已导入 {{events}} 个事件，覆盖 {{domains}} 个域名。模型正在重新训练。",
     "historyBootstrapSkipped": "已跳过——历史此前已导入，或当前没有可用历史。",
     "historyBootstrapFailed": "无法读取浏览器历史，请确认扩展仍持有「历史记录」权限。",
-
     "dangerZoneTitle": "重置",
     "wipe": "清除全部 Augur 数据",
     "wipeConfirm": "确认清除全部",
@@ -402,5 +391,28 @@
     "rebuildAggregatesHint": "重新算一次域名统计和共现",
     "toggleLanguage": "切换语言",
     "toggleLanguageHint": "在英文和中文之间切换"
+  },
+  "declutter": {
+    "button": "整理",
+    "tooltip": "审阅所有不活跃的标签，一次性清理",
+    "title": "整理标签页",
+    "subtitle": "{{total}} 个打开的标签里，{{stale}} 个已不活跃",
+    "selectAll": "全选",
+    "empty": "没有不活跃的标签——很整洁。",
+    "keep": "保留",
+    "stashN": "暂存 {{n}}",
+    "closeN": "关闭 {{n}}",
+    "openedAgo": "{{ago}}前打开，从未查看",
+    "idleFor": "已闲置 {{ago}}",
+    "tier": {
+      "never_opened": "从未查看",
+      "stale_week": "一周以上未用",
+      "stale_day": "一天以上未用",
+      "stale": "数小时未用",
+      "model": "模型判断可清理"
+    }
+  },
+  "common": {
+    "cancel": "取消"
   }
 }

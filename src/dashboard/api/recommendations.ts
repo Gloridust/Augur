@@ -1,6 +1,7 @@
 import type {
   CleanupCandidate,
   CleanupFeatures,
+  CleanupSweep,
   DataSummary,
   OpenCandidate,
   RecommendFeatures,
@@ -31,6 +32,15 @@ export async function fetchCleanupRecommendations(): Promise<CleanupCandidate[]>
 export async function fetchAllCleanupCandidates(): Promise<CleanupCandidate[]> {
   const r = await callRpc({ kind: 'recommend.cleanup.all' });
   return r.ok && r.kind === 'recommend.cleanup.all' ? r.data : [];
+}
+
+// Full bulk-declutter sweep — the entire stale population (rule-based tiers,
+// not just the model's confident few) plus totals. Powers the DeclutterDialog.
+export async function fetchCleanupSweep(): Promise<CleanupSweep> {
+  const r = await callRpc({ kind: 'cleanup.sweep' });
+  return r.ok && r.kind === 'cleanup.sweep'
+    ? r.data
+    : { candidates: [], totalTabs: 0, staleTabs: 0 };
 }
 
 export async function fetchInsights(): Promise<InsightsBundle | null> {

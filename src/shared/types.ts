@@ -295,11 +295,32 @@ export interface RecommendationContext {
   openDomains: string[];
 }
 
+// Confidence/recency tier for a cleanup candidate, ordered most→least
+// obviously a zombie. The bulk "declutter" sweep surfaces ALL of these and
+// lets the user deselect; the precise inline card only uses model-flagged
+// picks. `model` = flagged by the LR head but not caught by a staleness rule.
+export type CleanupTier =
+  | 'never_opened' // focused 0 times since open (opened, never looked at)
+  | 'stale_week' // not focused in ≥ 7 days
+  | 'stale_day' // not focused in ≥ 24 h
+  | 'stale' // not focused in ≥ a few hours
+  | 'model'; // model-confident, no staleness rule matched
+
 export interface CleanupCandidate {
   tab: chrome.tabs.Tab;
   features: CleanupFeatures;
   score: number;
   reason: string;
+  // Present on bulk-sweep results; absent on the precise inline path.
+  tier?: CleanupTier;
+}
+
+// Result of the bulk declutter sweep — the full stale population plus the
+// totals needed to show "N of M tabs are stale".
+export interface CleanupSweep {
+  candidates: CleanupCandidate[];
+  totalTabs: number; // all open tabs (incl. pinned/active)
+  staleTabs: number; // candidates.length, for convenience
 }
 
 export interface OpenCandidate {

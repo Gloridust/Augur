@@ -246,6 +246,37 @@ async function startFocusSegment(tabId: number, ts: number, prevTabId?: number):
   }
 }
 
+// ── Stale-tab badge ────────────────────────────────────────────────────────
+// A toolbar-icon badge showing the count of stale tabs (no focus in ≥2h, or
+// opened-and-never-viewed). Heavy tab-hoarders live inside their tabs, not on
+// the dashboard, so this is the one always-visible nudge toward the Declutter
+// sweep — clicking the icon opens the dashboard. Deliberately cheap: reads the
+// in-memory tab-state map, no chrome.tabs.query, no feature pipeline. Mirrors
+// the declutter sweep's staleness rules so the number roughly matches.
+const STALE_BADGE_MS = 2 * 60 * 60 * 1000;
+const STALE_BADGE_MIN_AGE_MS = 30 * 60 * 1000;
+async function updateStaleBadge(): Promise<void> {
+  try {
+    if (!chrome.action?.setBadgeText) return;
+    const map = await getStateMap();
+    const now = Date.now();
+    let stale = 0;
+    for (const key of Object.keys(map)) {
+      const s = map[Number(key)];
+      if (!s || s.pinned || s.focusedAt) continue; // skip pinned + currently-focused
+      const age = now - s.openedAt;
+      if (age < STALE_BADGE_MIN_AGE_MS) continue;
+      const neverViewed = s.focusCount === 0;
+      const idleMs = neverViewed ? age : Math.max(0, age - s.focusMs);
+      if (neverViewed || idleMs >= STALE_BADGE_MS) stale++;
+    }
+    await chrome.action.setBadgeBackgroundColor({ color: '#D97706' });
+    await chrome.action.setBadgeText({ text: stale > 0 ? String(stale) : '' });
+  } catch {
+    // Best-effort — chrome.action can be unavailable in some contexts.
+  }
+}
+
 async function reconcileOpenTabs(): Promise<void> {
   const tabs = await chrome.tabs.query({});
   const map = await getStateMap();
@@ -274,6 +305,7 @@ async function reconcileOpenTabs(): Promise<void> {
   if (active?.id !== undefined) {
     await setFocusedTabId(active.id);
   }
+  await updateStaleBadge();
 }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -417,6 +449,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     } catch (err) {
       console.error('[augur] forest retrain failed', err);
     }
+  } else if (alarm.name === 'heartbeat') {
+    // Refresh the stale-tab badge as tabs age into staleness between events.
+    await updateStaleBadge();
   }
 });
 
@@ -699,6 +734,10 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
       focusCount: final?.focusCount ?? state.focusCount,
     });
   }
+
+  // Closing tabs (e.g. a Declutter sweep) should drop the badge immediately,
+  // not wait for the next 5-min heartbeat.
+  await updateStaleBadge();
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {

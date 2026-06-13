@@ -24,8 +24,9 @@ import LayersIcon from '@mui/icons-material/Layers';
 import LanguageIcon from '@mui/icons-material/Language';
 import WindowIcon from '@mui/icons-material/Window';
 import SearchIcon from '@mui/icons-material/Search';
-import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import CleaningServicesIcon from '@mui/icons-material/CleaningServices';
 import { activateTab, closeTabs, useTabs } from '../hooks/useTabs';
+import { DeclutterDialog } from './DeclutterDialog';
 import {
   fetchAllCleanupCandidates,
   logUiEvent,
@@ -100,6 +101,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     return saved === 'window' ? 'window' : 'domain';
   });
   const [focusedTabId, setFocusedTabId] = useState<number | null>(null);
+  const [declutterOpen, setDeclutterOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -530,15 +532,15 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
             : t('tabs.windowCount', { count: windowGroups.length })}
         </Typography>
         <Box sx={{ flex: 1 }} />
-        <Tooltip title={t('cleanup.smartTooltip')}>
+        <Tooltip title={t('declutter.tooltip', { defaultValue: 'Review every stale tab and sweep them in one pass' })}>
           <span>
             <Button
               size="small"
               variant="outlined"
-              color="primary"
-              onClick={() => void runSmartCleanup(true)}
-              disabled={smartLoading || tabs.length === 0}
-              startIcon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />}
+              color="warning"
+              onClick={() => setDeclutterOpen(true)}
+              disabled={tabs.length === 0}
+              startIcon={<CleaningServicesIcon sx={{ fontSize: 16 }} />}
               sx={{
                 textTransform: 'none',
                 borderRadius: 999,
@@ -547,7 +549,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
                 px: 1.25,
               }}
             >
-              {t('cleanup.smartButton')}
+              {t('declutter.button', { defaultValue: 'Declutter' })}
             </Button>
           </span>
         </Tooltip>
@@ -977,6 +979,8 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
           {t('tabs.keyboardHint')}
         </Typography>
       )}
+
+      <DeclutterDialog open={declutterOpen} onClose={() => setDeclutterOpen(false)} />
     </Box>
   );
 }
