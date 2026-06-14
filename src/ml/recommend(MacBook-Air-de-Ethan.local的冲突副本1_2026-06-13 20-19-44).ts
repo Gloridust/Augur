@@ -1,5 +1,4 @@
 import { db, extractDomain } from '../shared/db';
-import { logError } from '../shared/errorlog';
 import type {
   DomainStats,
   OpenCandidate,
@@ -678,7 +677,7 @@ export async function trainImplicitOpen(
     mlp.updateGroup(group, ctx?.sampleWeight ?? 1);
     await saveMlp(mlp);
   } catch (err) {
-    void logError('mlpTrainSave', err);
+    console.error('[augur] MLP train/save failed', err);
   }
 
   await saveRecommendModel(model);

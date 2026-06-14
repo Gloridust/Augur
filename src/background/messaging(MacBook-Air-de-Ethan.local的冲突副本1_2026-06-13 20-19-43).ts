@@ -15,7 +15,6 @@ import {
   wipeAll,
 } from '../ml/data-ops';
 import { db as sharedDb } from '../shared/db';
-import { logError } from '../shared/errorlog';
 import type { TabEvent } from '../shared/types';
 import { trainEmbeddingBatch } from '../ml/embedding-train';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
@@ -342,9 +341,6 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       }
     }
   } catch (err) {
-    // Persist the failure (with the RPC kind) so it shows up in the debug
-    // bundle — not just in the caller's one-off error string.
-    void logError(`rpc.${req.kind}`, err);
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

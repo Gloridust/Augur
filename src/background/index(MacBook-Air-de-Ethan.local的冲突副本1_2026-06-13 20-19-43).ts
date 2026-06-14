@@ -25,7 +25,6 @@ import { bumpUrlPrefix, pruneUrlPrefixes } from '../ml/urlprefix';
 import { observeDomainText, pruneDomainText } from '../ml/domaintext';
 import { trainBlendCalib } from '../ml/blendcalib';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
-import { logError } from '../shared/errorlog';
 import { registerMessaging } from './messaging';
 import {
   deleteTabState,
@@ -168,7 +167,7 @@ async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'
       await trainImplicitOpen(event, ctx);
     }
   } catch (err) {
-    void logError('logEvent', err);
+    console.error('[chromehomepage] failed to log event', err, event);
   }
 }
 
@@ -417,7 +416,7 @@ async function warmupRecommendIfNeeded(): Promise<void> {
       `[augur] LR warmup: ${trained} → ${trained + replayResult.openSamples * 6} samples; forest=${forestResult.trained}`,
     );
   } catch (err) {
-    void logError('lrWarmup', err);
+    console.error('[augur] LR warmup failed', err);
   }
 }
 
@@ -433,7 +432,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     try {
       await trainBlendCalib(now);
     } catch (err) {
-      void logError('blendCalibration', err);
+      console.error('[augur] blend calibration failed', err);
     }
     await setLastAggregateAt(now);
   } else if (alarm.name === 'embeddingRetrain') {
@@ -448,24 +447,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
         );
       }
     } catch (err) {
-      void logError('forestRetrain', err);
+      console.error('[augur] forest retrain failed', err);
     }
   } else if (alarm.name === 'heartbeat') {
     // Refresh the stale-tab badge as tabs age into staleness between events.
     await updateStaleBadge();
   }
-});
-
-// Catch-all diagnostics: anything that escapes a try/catch (or an unhandled
-// promise rejection) gets persisted to the error ring-buffer so it rides
-// along in the debug bundle. Without this, SW crashes leave zero trace once
-// the worker restarts — exactly what made the "document is not defined" bug
-// take several releases to pin down.
-self.addEventListener('error', (e) => {
-  void logError('sw.onerror', (e as ErrorEvent).error ?? (e as ErrorEvent).message);
-});
-self.addEventListener('unhandledrejection', (e) => {
-  void logError('sw.unhandledrejection', (e as PromiseRejectionEvent).reason);
 });
 
 registerMessaging();

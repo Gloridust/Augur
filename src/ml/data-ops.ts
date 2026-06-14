@@ -1,4 +1,5 @@
 import { db } from '../shared/db';
+import { loadErrorLog } from '../shared/errorlog';
 import type { DataSummary } from '../shared/types';
 import { clearCleanupCaches } from './cleanup';
 import { clearCircadianCache } from './circadian';
@@ -152,7 +153,7 @@ export interface DebugBundleResult {
 }
 
 export async function exportDebugBundle(): Promise<DebugBundleResult> {
-  const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv] =
+  const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv, errorLog] =
     await Promise.all([
       db.events.toArray(),
       db.feedback.toArray(),
@@ -162,6 +163,7 @@ export async function exportDebugBundle(): Promise<DebugBundleResult> {
       db.workspaces.toArray(),
       db.pins.toArray(),
       db.kv.toArray(),
+      loadErrorLog(),
     ]);
 
   const exportedAt = Date.now();
@@ -178,6 +180,7 @@ export async function exportDebugBundle(): Promise<DebugBundleResult> {
       workspaces: workspaces.length,
       pins: pins.length,
       kvEntries: kv.length,
+      errors: errorLog.length,
     },
     featureNames: {
       cleanup: CLEANUP_FEATURE_NAMES,
@@ -203,6 +206,7 @@ cleanup heads predicted, what the user did, where the model was wrong.
 | stash.json | Currently-stashed tabs |
 | workspaces.json | Saved workspaces |
 | pins.json | Pinned shortcuts |
+| errors.json | Persisted error ring-buffer (last 200 swallowed/uncaught errors): \`{ts, context, message, stack}\`. Empty = no failures recorded. |
 | kv.json | Model weights, bandit posteriors, embeddings, sequence memory, forest, \
 circadian histogram, URL-prefix table, eval history. Keys: \`model:cleanup:vN\`, \
 \`model:recommend:vN\`, \`model:recommend:forest:vN\`, \`bandit:cleanup:v1\`, \
@@ -240,6 +244,7 @@ predictions.
     { name: 'workspaces.json', data: enc(workspaces) },
     { name: 'pins.json', data: enc(pins) },
     { name: 'kv.json', data: enc(kv) },
+    { name: 'errors.json', data: enc(errorLog) },
   ]);
 
   return {
