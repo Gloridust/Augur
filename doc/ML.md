@@ -10,32 +10,40 @@ Augur runs **two recommendation heads**, both built on the same `OnlineLogReg` c
 
 | Head | Predicts | Features | Source |
 |---|---|---|---|
-| **A** | "Is the user likely to want to OPEN this domain right now?" | 15 | [`recommend.ts`](../src/ml/recommend.ts) |
-| **B** | "Is this open tab a candidate for cleanup?" | 26 | [`cleanup.ts`](../src/ml/cleanup.ts) |
+| **A** | "Is the user likely to want to OPEN this domain right now?" | **30** (`recommend:v9`) | [`recommend.ts`](../src/ml/recommend.ts) |
+| **B** | "Is this open tab a candidate for cleanup?" | 26 (`cleanup:v4`) | [`cleanup.ts`](../src/ml/cleanup.ts) |
 
 Both heads:
 - Standardize features via per-feature Welford running stats
 - Train via Adam + L1 proximal soft-thresholding + L2 (in the gradient)
 - Calibrate output via online Platt scaling after warm-up
-- Have a Beta-Bernoulli Thompson-sampling bandit per `(domain, reason)` arm that multiplies the calibrated probability
+- Have a Beta-Bernoulli Thompson-sampling bandit per `(domain, reason)` arm. On the cleanup head the bandit still multiplies the score; on the open head it was **promoted to a learned feature** (`banditLogit`) in v8 rather than a hard-coded multiplier.
 
-Head A also drives the Pin row's smart sort (via [`pins.ts`](../src/ml/pins.ts)) and OracleHint (the dynamic-island top-3 capsule). One model → many surfaces; signals from any surface train the same weights.
+Head A is no longer a bare LogReg — it's the linear member of an **ensemble** (see §3.1): `LogReg + RandomForest + optional TinyMLP`. Head A also drives the Pin row's smart sort (via [`pins.ts`](../src/ml/pins.ts)) and OracleHint (the dynamic-island top-3 capsule). One model → many surfaces; signals from any surface train the same weights.
+
+> **Reality check (from a real usage trace).** The open head backtests strongly (hit@3 ≈ 85–92%, recall@pool ≈ 95–98%), but ~97% of a heavy user's tab-opens happen through the address bar / link-clicks that an extension can't intercept, so the open surfaces see little adoption. The feature with real traction is **cleanup** (§7) — which is why the recent work went there (bulk Declutter sweep + stale-tab badge). Model accuracy was never the open head's bottleneck; the surface is.
 
 ## 2. Feature pipeline
 
-### Head A — open recommender (15 features)
+### Head A — open recommender (30 features)
 
-| Family | Features |
+The order in [`RECOMMEND_FEATURE_NAMES`](../src/ml/features.ts) is the source of truth (append-only — see §2.4). Grouped by the version that introduced them:
+
+| Family (version) | Features |
 |---|---|
-| Frecency | `freqDecay` (Σ exp(−Δt/τ), τ=14d) |
-| Engagement | `avgFocusMs` |
-| Per-domain temporal | `hourMatch`, `dowMatch` (softmax over the domain's hour-of-day / dow histogram, indexed by the current hour/dow) |
-| Cyclic time | `hourSin`, `hourCos`, `dowSin`, `dowCos` (sin/cos of current hour mod 24, dow mod 7) |
-| Recency | `recencyHours` since last visit |
-| Time-series | `visitVelocity` (last-24h rate / 14-day baseline, capped at 5×), `sessionContext` (1 if visited in last 30min) |
-| Co-occurrence | `cooccurrenceWithFocused` (pair counts within 5-min windows, decayed) |
-| Embedding | `embedSimToFocused` (cosine in 32-dim skip-gram space) |
-| State | `isCurrentlyOpen`, `isPinnedSomewhere` |
+| Frecency (v1) | `freqDecay` (Σ exp(−Δt/τ), τ=14d) |
+| Engagement (v1) | `avgFocusMs` |
+| Per-domain temporal (v1) | `hourMatch`, `dowMatch` (softmax over the domain's hour-of-day / dow histogram, indexed by the current hour/dow) |
+| Recency (v1) | `recencyHours` since last visit |
+| Co-occurrence (v1) | `cooccurrenceWithFocused` (pair counts within 5-min windows, decayed) |
+| Embedding (v1) | `embedSimToFocused` (cosine in 32-dim skip-gram space) |
+| Time-series (v1) | `visitVelocity` (last-24h rate / 14-day baseline, capped at 5×), `sessionContext` (1 if visited in last 30min) |
+| State (v1) | `isCurrentlyOpen`, `isPinnedSomewhere` |
+| Cyclic time (v3) | `hourSin`, `hourCos`, `dowSin`, `dowCos` (sin/cos of current hour mod 24, dow mod 7) |
+| Sequence memory (v4) | `seqProbShort`, `seqProbLong`, `seqProbTime` — three timescales from [`models/markov.ts`](../src/ml/models/markov.ts); the LR learns the per-user mixture (see §6) |
+| Directed / session / decision (v8) | `transitionAffinity` (asymmetric A→B from in/out skip-gram tables), `sessionSim` (cosine to the multi-tab session centroid), `sessionCohesion` (session cluster tightness), `minutesIntoSession`, `isSessionStart`, `hourActivityZ` (z-score of the hour vs the user's OWN rhythm), `banditLogit` (acceptance posterior as a logit), `prefixConcentration` (share of traffic in the domain's top URL prefix) |
+| Semantic + factorized (v8) | `titleSimToFocused`, `titleSimToSession` (hashed title/URL text vectors — shared vocabulary even for never-co-visited domains), `factorizedTransition` (u(context)·v(target) — fires for (from→to) pairs the count tables never saw) |
+| **Target attention (v9)** | **`dinAttention`** — DIN-style candidate-as-query attention over the recent focus history (§3.2) |
 
 ### Head B — cleanup recommender (26 features)
 
@@ -174,6 +182,26 @@ const weight =
 ### Cooldown
 
 After the user clicks Clear, a 30-second `lastDismissTsRef` cooldown prevents the visibility-change auto-rerun from immediately re-selecting the same tabs. Close (which actually removes tabs) does NOT enter cooldown — re-eval after closing is fresh content.
+
+### Bulk Declutter sweep (precision head is too timid for hoarders)
+
+The loop above is tuned for **precision** — the LR only auto-flags the ~5 tabs it's very sure about (real accept rate ≈ 86%). But a heavy tab-hoarder sits on 50–100 open tabs, almost all stale, and a 5-at-a-time surface can't keep up. The **Declutter** dialog ([`DeclutterDialog.tsx`](../src/dashboard/components/DeclutterDialog.tsx), backed by `cleanupSweep()` in [`cleanup.ts`](../src/ml/cleanup.ts)) is a **review-then-close** surface, so it optimizes for **recall** instead: it surfaces everything that trips a simple, explainable staleness rule regardless of the model score, and the user deselects the few keepers.
+
+Rule-based tiers (`classifyTier`, ordered most→least obviously a zombie), which **bypass the conservative 0.55 threshold**:
+
+| Tier | Rule | Default-checked |
+|---|---|---|
+| `never_opened` | `focusCount === 0` (opened, never viewed) | ✅ |
+| `stale_week` | not focused in ≥ 7 days | ✅ |
+| `stale_day` | not focused in ≥ 24 h | ✅ |
+| `stale` | not focused in ≥ 2 h | — (user opts in) |
+| `model` | model-confident but no staleness rule matched | — |
+
+Named tab groups (`isInNamedGroup`) are excluded (deliberate user intent); pinned / active / audible / dashboard tabs stay hard-filtered as before. Accepting a bulk close still trains the head (`'accepted'`), same signal as the inline card.
+
+### Stale-tab toolbar badge
+
+Heavy hoarders live inside their tabs, not on the dashboard, so the one always-visible nudge is a count badge on the extension icon ([`updateStaleBadge`](../src/background/index.ts)). It's computed cheaply from the in-memory tab-state map (no `chrome.tabs.query`, no feature pipeline) using the same staleness rules, updated on the 5-min heartbeat, on tab-close, and on reconcile. Clicking the icon opens the dashboard → Declutter.
 
 ## 7. Implicit training
 
@@ -373,7 +401,31 @@ Three more subsystems landed in v8 beyond the Phase 0–4 core:
 
 **Final-score calibration (Phase 4.2 complete).** [`blendcalib.ts`](../src/ml/blendcalib.ts) fits a 2-param Platt layer over the blended ensemble score against realized outcomes (`oracle_shown` → opened-within-5-min, joined from the event log), retrained in the nightly alarm. OracleHint thresholds on a genuinely calibrated probability; the transform is monotonic so ranking is unchanged.
 
-## 20. What's NOT done
+## 20. v9 — DIN-style target attention
+
+[`attention.ts`](../src/ml/attention.ts). The one industry-recommender idea that genuinely transfers to a single-user, on-device setting, borrowed from Alibaba's **Deep Interest Network** (DIN, KDD'18) — the pattern behind Taobao/Douyin-class rankers.
+
+DIN's insight: score a candidate by attending over the user's recent behavior sequence **with the candidate as the query**. History items that resemble the candidate get the attention mass, so the model asks *"does this candidate strongly continue **any** thread of what I've been doing?"* rather than comparing against a blurred average.
+
+The `dinAttention` feature (feature #30) computes, over the last 8 focused domains:
+
+```
+attended = Σ_i  softmax_i( cos(h_i, c) / τ ) · ρ^i · cos(h_i, c)
+dinAttention = (attended + 1) / 2        # → [0, 1], 0.5 = neutral / OOV
+```
+
+with temperature `τ = 0.25` and a recency prior `ρ = 0.85` (each step back in history multiplies attention by ρ). It reuses the existing 32-dim skip-gram embeddings.
+
+**Why it adds signal the existing features miss:**
+- `sessionSim` compares the candidate to the session *centroid* — in a multi-task session (docs+GitHub interleaved with Twitter) the centroid is a semantic smoothie that dilutes both threads. Attention keeps the threads separate.
+- `embedSimToFocused` only sees the single most-recent domain; the thread from three switches ago is invisible.
+- The Markov timescales count *exact* domain transitions; they can't generalize to a semantically-similar-but-new continuation. Attention over embeddings can.
+
+**Deliberately parameter-free** (fixed τ + recency prior, no learned attention MLP): full DIN learns its attention network from millions of users; on one user's thousands of events those parameters would overfit before they helped. As with every other predictor in the stack, the LR / forest / MLP heads learn *how much to trust* this one number — a useless signal self-gates to a ~0 weight, so no separate gating is needed.
+
+Offline validation on a real 7-day event trace (cold 31-domain embedding): P(true-next-domain scores higher than a random distractor) = **0.71** as a standalone signal (0.5 = no signal). It's a modest additive lift on top of an already-strong ensemble, not a step change — the honest expectation is a few points of hit@1.
+
+## 21. What's NOT done
 
 Conscious choices to keep the model surface manageable:
 
@@ -381,7 +433,7 @@ Conscious choices to keep the model surface manageable:
 - **Isotonic calibration** — Platt assumes sigmoid-shaped miscalibration. Isotonic relaxes this but needs more samples to be stable. Platt is good enough for now.
 - **Per-domain bandit prior from category** — Beta(1,1) cold-start could be replaced with a category-derived prior (social, productivity, media). Needs a domain classifier first.
 - **Hash-trick feature crosses** — `domain × hour-of-day` would explicitly model "I always have docs.google.com open Monday 9am" patterns. Currently the model has to learn this implicitly via the cyclic time + per-domain hour softmax features.
-- **Sequence features (RNN-lite)** — last-3-domain-focus chain. Useful for "what comes next in the user's workflow" but adds another moving piece.
+- **Learned-attention DIN / SASRec transformer** — v9's `dinAttention` is a *parameter-free* attention. A learned attention MLP (true DIN) or a small self-attention sequence model (SASRec) is the natural next step, but on one user's thousands of events it would overfit before it helped, and a hand-written backprop transformer in the SW is a real risk surface. Deferred until the recovered event history is large enough and a v9 backtest baseline exists to justify it. (The parameter-free `seqProbShort/Long/Time` + `dinAttention` already cover most of the "what comes next in the workflow" signal.)
 
 ## See also
 
