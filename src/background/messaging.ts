@@ -189,7 +189,7 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         return { ok: true, kind: 'data.exportDebugBundle', data };
       }
       case 'data.import': {
-        const data = await importAll(req.dump);
+        const data = await importAll(req.dump, { merge: req.merge === true });
         return { ok: true, kind: 'data.import', data };
       }
       case 'event.log': {

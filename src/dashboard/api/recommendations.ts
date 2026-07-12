@@ -127,8 +127,11 @@ export interface ImportResultData {
   reason?: string;
   counts?: Record<string, number>;
 }
-export async function importAllData(dump: unknown): Promise<ImportResultData | null> {
-  const r = await callRpc({ kind: 'data.import', dump });
+export async function importAllData(
+  dump: unknown,
+  opts: { merge?: boolean } = {},
+): Promise<ImportResultData | null> {
+  const r = await callRpc({ kind: 'data.import', dump, merge: opts.merge === true });
   return r.ok && r.kind === 'data.import' ? r.data : null;
 }
 

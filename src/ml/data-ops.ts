@@ -71,11 +71,50 @@ export interface ImportResult {
   counts?: Record<string, number>;
 }
 
+// Dedupe key for an event row. Events have an autoincrement `id` that is
+// meaningless across installs, so identity is the observable tuple. Two
+// legitimate events landing on the same (ts, type, tabId, url) in the same
+// millisecond don't exist in practice (Chrome delivers listener callbacks
+// serially and logEvent stamps Date.now()).
+function eventKey(e: Record<string, unknown>): string {
+  return `${e.ts}|${e.type}|${e.tabId ?? ''}|${e.url ?? ''}`;
+}
+
+function feedbackKey(f: Record<string, unknown>): string {
+  return `${f.ts}|${f.surface ?? ''}|${f.domain ?? ''}|${f.action ?? ''}`;
+}
+
+// Strip the autoincrement PK so bulkAdd assigns fresh ids instead of
+// colliding with rows that already exist in this install's table.
+function stripId<T extends Record<string, unknown>>(row: T): Omit<T, 'id'> {
+  const { id: _id, ...rest } = row;
+  return rest;
+}
+
 // Restore a full backup onto this device — the other half of migration that
-// was missing. Replaces existing data (a migration target is normally a
-// fresh install; restoring is "make this device match the backup"). Caller
-// confirms first; the dashboard reloads afterward so the SW re-reads models.
-export async function importAll(raw: unknown): Promise<ImportResult> {
+// was missing. Two modes:
+//
+//   merge=false (default): REPLACE. A migration target is normally a fresh
+//   install; restoring means "make this device match the backup".
+//
+//   merge=true: UNION. For recovering lost history into an install that has
+//   since accumulated its own data (the extension-ID-changed → fresh-DB
+//   failure mode). Events/feedback are deduped on their observable tuple, so
+//   importing the same bundle twice is idempotent. domains/cooccurrence are
+//   NOT imported in merge mode — they're derived tables, and the caller is
+//   expected to run the warm-up chain (aggregate.rebuild → embedding →
+//   sequence.rebuild → lr.replay → forest.retrain) which rebuilds them from
+//   the merged event log. kv (model weights) keeps local values and only
+//   adopts imported keys that don't exist locally, for the same reason: the
+//   warm-up retrains on the union, which beats month-old weights.
+//
+// Caller confirms first; the dashboard reloads afterward so the SW re-reads
+// models.
+export async function importAll(
+  raw: unknown,
+  opts: { merge?: boolean } = {},
+): Promise<ImportResult> {
+  const merge = opts.merge ?? false;
   const dump = raw as Partial<DataDump> | null;
   if (
     !dump ||
@@ -96,6 +135,73 @@ export async function importAll(raw: unknown): Promise<ImportResult> {
     pins: dump.pins ?? [],
     kv: dump.kv ?? [],
   };
+
+  if (merge) {
+    const added: Record<string, number> = {};
+    await db.transaction(
+      'rw',
+      [db.events, db.feedback, db.stash, db.workspaces, db.pins, db.kv],
+      async () => {
+        // Events: union with dedupe.
+        const existingEvents = await db.events.toArray();
+        const seenEv = new Set(existingEvents.map((e) => eventKey(e as never)));
+        const newEvents = (tables.events as Record<string, unknown>[])
+          .filter((e) => e && typeof e.ts === 'number' && !seenEv.has(eventKey(e)))
+          .map(stripId);
+        await db.events.bulkAdd(newEvents as never[]);
+        added.events = newEvents.length;
+
+        // Feedback: union with dedupe.
+        const existingFb = await db.feedback.toArray();
+        const seenFb = new Set(existingFb.map((f) => feedbackKey(f as never)));
+        const newFb = (tables.feedback as Record<string, unknown>[])
+          .filter((f) => f && typeof f.ts === 'number' && !seenFb.has(feedbackKey(f)))
+          .map(stripId);
+        await db.feedback.bulkAdd(newFb as never[]);
+        added.feedback = newFb.length;
+
+        // User artifacts: add imported rows that don't collide on content.
+        const stashUrls = new Set((await db.stash.toArray()).map((s) => s.url));
+        const newStash = (tables.stash as Record<string, unknown>[])
+          .filter((s) => s?.url && !stashUrls.has(s.url as string))
+          .map(stripId);
+        await db.stash.bulkAdd(newStash as never[]);
+        added.stash = newStash.length;
+
+        const wsNames = new Set((await db.workspaces.toArray()).map((w) => w.name));
+        const newWs = (tables.workspaces as Record<string, unknown>[])
+          .filter((w) => w?.name && !wsNames.has(w.name as string))
+          .map(stripId);
+        await db.workspaces.bulkAdd(newWs as never[]);
+        added.workspaces = newWs.length;
+
+        const pinKeys = new Set((await db.pins.toArray()).map((p) => p.key));
+        const newPins = (tables.pins as Record<string, unknown>[]).filter(
+          (p) => p?.key && !pinKeys.has(p.key as string),
+        );
+        await db.pins.bulkPut(newPins as never[]);
+        added.pins = newPins.length;
+
+        // kv: local wins; adopt only keys absent locally (e.g. evalHistory
+        // from the old install). The warm-up chain retrains weights anyway.
+        const localKv = new Set((await db.kv.toArray()).map((r) => r.key));
+        const newKv = (tables.kv as Record<string, unknown>[]).filter(
+          (r) => r?.key && !localKv.has(r.key as string),
+        );
+        await db.kv.bulkPut(newKv as never[]);
+        added.kv = newKv.length;
+      },
+    );
+
+    clearCleanupCaches();
+    clearRecommendCaches();
+    clearEmbeddingCache();
+    clearCircadianCache();
+    clearUrlPrefixCache();
+    clearDomainTextCache();
+    clearBlendCalibCache();
+    return { ok: true, counts: added };
+  }
 
   await db.transaction(
     'rw',

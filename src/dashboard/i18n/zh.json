@@ -299,7 +299,7 @@
     "export": "导出全部数据",
     "exportTooltip": "下载一个 JSON,包含全部:工作区、置顶项、暂存、事件、反馈,以及每一个训练好的模型(权重、嵌入、序列记忆、校准)。这既是你的备份,也是迁移到新设备的文件。**包含你的浏览历史,请妥善保管**。",
     "import": "导入数据",
-    "importTooltip": "从导出的备份还原(例如在新设备上)。会替换本设备当前的所有数据,然后重新加载。",
+    "importTooltip": "恢复 JSON 备份（整体替换），或导入调试包 .zip（合并历史数据，自动去重）",
     "importDone": "数据已导入,正在重新加载…",
     "importBadFile": "该文件不是有效的 JSON。",
     "importNotBackup": "这不是 Augur 备份文件。请使用「导出全部数据」生成的文件。",
@@ -318,7 +318,17 @@
     "wipe": "清除全部 Augur 数据",
     "wipeConfirm": "确认清除全部",
     "cancel": "取消",
-    "privacyHint": "清除会删除所有事件、模型权重、保存的工作区、置顶项和偏好设置。此操作不可撤销。"
+    "privacyHint": "清除会删除所有事件、模型权重、保存的工作区、置顶项和偏好设置。此操作不可撤销。",
+    "importMerged": "已合并 {{count}} 条历史事件，开始预热模型…",
+    "warmupStep": "预热中：{{step}}",
+    "warmupDone": "模型预热完成，即将刷新",
+    "warmup": {
+      "aggregates": "重建统计聚合",
+      "embedding": "训练域名向量",
+      "sequence": "重建序列记忆",
+      "replay": "重放隐式训练",
+      "forest": "重训随机森林"
+    }
   },
   "debug": {
     "heads": "预测模型",

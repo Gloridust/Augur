@@ -57,7 +57,7 @@ export type RpcRequest =
   | { kind: 'data.resetModels' }
   | { kind: 'data.bootstrapHistory'; force?: boolean }
   | { kind: 'data.exportDebugBundle' }
-  | { kind: 'data.import'; dump: unknown }
+  | { kind: 'data.import'; dump: unknown; merge?: boolean }
   | {
       // Dashboard-initiated event log entry. `partial` is a TabEvent without
       // ts/hour/dow (SW stamps those). Used for product-surface events like

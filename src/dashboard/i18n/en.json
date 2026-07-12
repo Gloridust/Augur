@@ -299,7 +299,7 @@
     "export": "Export all data",
     "exportTooltip": "Download one JSON with everything: workspaces, pins, stash, events, feedback, and every trained model (weights, embeddings, sequence memory, calibration). This is your backup AND your move-to-a-new-device file. Includes your browsing history — keep it private.",
     "import": "Import data",
-    "importTooltip": "Restore from an exported backup (e.g. on a new device). Replaces all current data on this device, then reloads.",
+    "importTooltip": "Restore a JSON backup (full replace), or import a debug-bundle .zip (merge history, deduped)",
     "importDone": "Data imported. Reloading…",
     "importBadFile": "That file isn't valid JSON.",
     "importNotBackup": "That's not an Augur backup file. Use a file from “Export all data”.",
@@ -318,7 +318,17 @@
     "wipe": "Erase all Augur data",
     "wipeConfirm": "Yes, erase everything",
     "cancel": "Cancel",
-    "privacyHint": "Erasing removes every event, model weight, saved workspace, pinned shortcut, and preference. This cannot be undone."
+    "privacyHint": "Erasing removes every event, model weight, saved workspace, pinned shortcut, and preference. This cannot be undone.",
+    "importMerged": "Merged {{count}} history events — warming up models…",
+    "warmupStep": "Warming up: {{step}}",
+    "warmupDone": "Model warm-up complete, reloading",
+    "warmup": {
+      "aggregates": "rebuild aggregates",
+      "embedding": "train embeddings",
+      "sequence": "rebuild sequence memory",
+      "replay": "replay implicit training",
+      "forest": "retrain forest"
+    }
   },
   "debug": {
     "heads": "Prediction models",

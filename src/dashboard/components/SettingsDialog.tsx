@@ -32,9 +32,15 @@ import {
   exportAllData,
   exportDebugBundle,
   importAllData,
+  rebuildAggregates,
+  rebuildSequenceMemory,
+  replayImplicitTraining,
+  retrainEmbedding,
+  retrainForest,
   seedFromBrowserHistory,
   wipeAllData,
 } from '../api/recommendations';
+import { debugBundleToDump, isZipFile } from '../zipReader';
 import { toast } from './Toaster';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
@@ -170,18 +176,60 @@ export function SettingsDialog({ open, onClose }: Props) {
   };
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Post-import warm-up: rebuild every derived table and retrain every model
+  // from the (merged) event log, in dependency order. This is what turns an
+  // imported pile of events into prediction accuracy — without it a merge
+  // import leaves aggregates/models reflecting only the pre-import data.
+  // Each step is an existing, independently-tested RPC; failures in one step
+  // don't block the rest (best-effort recovery beats all-or-nothing).
+  const runWarmup = async () => {
+    const steps: Array<[string, () => Promise<unknown>]> = [
+      ['aggregates', rebuildAggregates],
+      ['embedding', retrainEmbedding],
+      ['sequence', rebuildSequenceMemory],
+      ['replay', replayImplicitTraining],
+      ['forest', retrainForest],
+    ];
+    for (const [key, run] of steps) {
+      toast({ message: t('settings.warmupStep', { step: t(`settings.warmup.${key}`) }), severity: 'info' });
+      try {
+        await run();
+      } catch {
+        // keep going — partial warm-up is still a net win
+      }
+    }
+  };
+
   const onImportFile = async (file: File) => {
     setBusy(true);
     try {
-      const text = await file.text();
+      const buf = new Uint8Array(await file.arrayBuffer());
       let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        toast({ message: t('settings.importBadFile'), severity: 'error' });
-        return;
+      let merge = false;
+      if (isZipFile(buf)) {
+        // Debug bundle → MERGE (recover lost history into the current
+        // install without discarding what it has since learned).
+        try {
+          parsed = debugBundleToDump(buf);
+        } catch {
+          parsed = null;
+        }
+        if (!parsed) {
+          toast({ message: t('settings.importBadFile'), severity: 'error' });
+          return;
+        }
+        merge = true;
+      } else {
+        // JSON backup → REPLACE (restore semantics, unchanged).
+        try {
+          parsed = JSON.parse(new TextDecoder().decode(buf));
+        } catch {
+          toast({ message: t('settings.importBadFile'), severity: 'error' });
+          return;
+        }
       }
-      const r = await importAllData(parsed);
+      const r = await importAllData(parsed, { merge });
       if (!r || !r.ok) {
         toast({
           message:
@@ -192,7 +240,17 @@ export function SettingsDialog({ open, onClose }: Props) {
         });
         return;
       }
-      toast({ message: t('settings.importDone'), severity: 'success' });
+      const mergedEvents = r.counts?.events ?? 0;
+      toast({
+        message: merge
+          ? t('settings.importMerged', { count: mergedEvents })
+          : t('settings.importDone'),
+        severity: 'success',
+      });
+      // Rebuild + retrain everything on the merged history so the models are
+      // warm the moment the page comes back.
+      await runWarmup();
+      toast({ message: t('settings.warmupDone'), severity: 'success' });
       onClose();
       // Reload so the SW re-reads the imported models + the UI re-renders.
       window.location.reload();
@@ -524,7 +582,7 @@ export function SettingsDialog({ open, onClose }: Props) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/json,.json"
+                  accept="application/json,.json,application/zip,.zip"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const f = e.target.files?.[0];
