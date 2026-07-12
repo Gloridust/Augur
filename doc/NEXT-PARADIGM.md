@@ -2,11 +2,17 @@
 
 > Status: **L1-lite + L2-lite SHIPPED in v8** (hashed text embeddings over
 > tab titles/URLs — see `textembed.ts` / `domaintext.ts` and the
-> `titleSimToFocused` / `titleSimToSession` features). L2-full (pretrained
-> sentence embeddings), L3 (two-tower retrieval), L4 (temporal point
-> process), and L5 (task graph) are **designed but NOT built** — they need
-> assets and verification that don't exist in the dev environment. This
-> document is the honest spec + status, not a claim of completion.
+> `titleSimToFocused` / `titleSimToSession` features). **v9 (v0.4.2) added
+> `dinAttention`** — an L3 *down-payment*: a DIN-style (Deep Interest
+> Network, Alibaba KDD'18) target-attention feature that lets the candidate
+> attend over the last 8 focused domains, parameter-free, reusing the
+> skip-gram embeddings ([`attention.ts`](../src/ml/attention.ts)). It is a
+> single feature inside the existing ensemble, not the learned two-tower
+> backbone — that (L3-full), L2-full (pretrained sentence embeddings), L4
+> (temporal point process), and L5 (task graph) remain **designed but NOT
+> built** — they need assets and verification that don't exist in the dev
+> environment. This document is the honest spec + status, not a claim of
+> completion.
 
 ## The core insight
 
@@ -78,13 +84,17 @@ Replace hand-crafted features as the BACKBONE with a learned bi-encoder:
 - score = dot product; train with sampled softmax (the v8 ranking objective
   already in `OnlineLogReg.updateGroup` is the same loss)
 
-The existing 29 hand-crafted features become a *wide residual* branch (true
+The existing 30 hand-crafted features become a *wide residual* branch (true
 wide-&-deep). **Why deferred:** a two-tower net is only worth it on top of
 L2-full embeddings (garbage-in otherwise), and it needs real backtest data
 to prove it beats the current LR+RF+MLP ensemble. Building it blind violates
 the promotion rule. The v8 `TinyMLP` (Phase 5) is the toe-in-the-water
 version — a deep head over the existing features, off by default, that the
-user can backtest-promote.
+user can backtest-promote. **v9's `dinAttention`** ([`attention.ts`](../src/ml/attention.ts))
+is a second down-payment: candidate-as-query attention (temperature 0.25,
+recency prior 0.85) over the last 8 focused domains, reusing the skip-gram
+embeddings — the query tower's attention pooling, distilled into one
+parameter-free feature that ships today without the full learned backbone.
 
 ### L4 — temporal point process · *designed, not built*
 
@@ -112,7 +122,7 @@ on L2-full + L4; it's the capstone, not a standalone.
 |---|---|---|
 | L1 richer signals | Title/URL + dwell shipped; web-nav/scroll deferred | New host permission → gated opt-in UX |
 | L2 semantic embed | **L2-lite shipped (hashing)** | L2-full needs a pretrained model asset + WASM runtime |
-| L3 two-tower | TinyMLP toe-in shipped (opt-in); full tower deferred | Needs L2-full + backtest proof |
+| L3 two-tower | TinyMLP toe-in (opt-in) + v9 `dinAttention` feature shipped; full learned tower deferred | Needs L2-full + backtest proof |
 | L4 temporal/hazard | Designed | Ground-up dual-head retrain + backtest proof |
 | L5 task graph | Designed | Depends on L2-full + L4 |
 

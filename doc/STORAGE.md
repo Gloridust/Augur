@@ -51,6 +51,11 @@ Database name: `augur` (legacy: `chromehomepage`). Defined in [`src/shared/db.ts
 
 **All Dexie tables.** Chrome contractually guarantees IndexedDB persistence across extension updates. No data loss when users update from the Chrome Web Store.
 
+Two hardening measures back this up (v0.4.2), closing both known real-world data-loss vectors:
+
+- **Stable `key` in the manifest** (RSA-2048 public key) pins the extension ID independent of the install path. Without it, Chrome derives the ID from the directory, so an unpacked build loaded from a different path opens a *different, empty* IndexedDB — this wiped ~27k events on 2026-07-05. The private key was generated once and discarded.
+- **`unlimitedStorage` permission** exempts the extension's IndexedDB (all events + trained model weights) from Chrome's best-effort eviction under disk pressure and lifts the quota cap.
+
 What does NOT survive:
 - `chrome.storage.session` keys (browser-restart-scoped, not update-scoped — these survive an update if the browser doesn't restart, but lose on browser quit)
 - KV keys orphaned by a bumped model version (see §3 below)
@@ -62,10 +67,21 @@ The `kv` table is a free-form key-value store. Keys in use:
 | Key | Value | Set by |
 |---|---|---|
 | `model:cleanup:v3` | Serialized `LogRegState` (weights, bias, Welford stats, Adam moments, Platt calibration) | [`saveCleanupModel`](../src/ml/persistence.ts) |
-| `model:recommend:v3` | Same shape, recommendation head | [`saveRecommendModel`](../src/ml/persistence.ts) |
+| `model:recommend:v9` | Same shape, recommendation head (30 features — bumped v8→v9 when `dinAttention` was added) | [`saveRecommendModel`](../src/ml/persistence.ts) |
+| `model:recommend:forest:v2` | Serialized RandomForest for the recommend head | [`saveRecommendModel`](../src/ml/persistence.ts) |
+| `model:recommend:mlp:v1` | Serialized optional TinyMLP (wide-&-deep head; off by default) | [`saveRecommendModel`](../src/ml/persistence.ts) |
 | `bandit:cleanup:v1` | `BanditState` — Map of `armId` → `{ α, β, impressions }` | [`saveBandit('cleanup')`](../src/ml/persistence.ts) |
 | `bandit:recommend:v1` | Same shape, recommendation bandit | [`saveBandit('recommend')`](../src/ml/persistence.ts) |
 | `embedding:v1` | `EmbeddingState` — vocab + 32-dim vectors + training step count + updatedAt | [`saveEmbedding`](../src/ml/persistence.ts) |
+| `transition:v1` | Factorized next-domain transition model (`u`/`v` vectors) | [`persistence.ts`](../src/ml/persistence.ts) |
+| `domainText:v1` | Per-domain running mean text-embedding vector | [`persistence.ts`](../src/ml/persistence.ts) |
+| `circadian:v1` | Decayed 24-bin personal activity histogram (`hourActivityZ`) | [`persistence.ts`](../src/ml/persistence.ts) |
+| `urlPrefixes:v1` | Per-domain decayed 2-segment URL-prefix counts (top 5) | [`persistence.ts`](../src/ml/persistence.ts) |
+| `blendCalib:v1` | Platt calibration over the blended LR+RF+MLP score | [`persistence.ts`](../src/ml/persistence.ts) |
+| `evalHistory:v1` | Ring (~50) of eval/backtest runs — the lab notebook | [`persistence.ts`](../src/ml/persistence.ts) |
+| `mlpEnabled:v1` | Boolean — user toggle that adds the TinyMLP to the ensemble | [`persistence.ts`](../src/ml/persistence.ts) |
+| `sequenceMemory:v1` | Three-timescale next-domain sequence counts | [`persistence.ts`](../src/ml/persistence.ts) |
+| `errorLog:v1` | Persistent error ring-buffer (last 200 `{ts, context, message, stack}`) | [`errorlog.ts`](../src/shared/errorlog.ts) |
 | `lastAggregateAt` | Number — ms timestamp of the last `decayAndPrune` run | [`setLastAggregateAt`](../src/ml/persistence.ts) |
 | `lastEmbedTrainAt` | Number — ms timestamp | [`saveEmbedding`](../src/ml/persistence.ts) (side effect) |
 | `historyBootstrappedAt` | Number — ms timestamp the one-time history bootstrap completed | [`bootstrapFromHistory`](../src/ml/history-bootstrap.ts) |
@@ -156,9 +172,16 @@ This is destructive and irreversible — the confirmation step is intentional.
 
 A softer "Reset models only" option clears just the model + bandit + embedding KV keys, preserving events and aggregates so retraining can proceed from existing data.
 
-## 8. Export
+## 8. Export & import
 
-Settings → Data → "Export JSON" calls [`exportAllData`](../src/ml/data-ops.ts) which serializes every Dexie table into one JSON blob and triggers a browser download. The dump format is what `import` would consume (no importer is shipped yet, but the export is forward-compatible).
+Settings → Data → "Export JSON" calls [`exportAllData`](../src/ml/data-ops.ts) which serializes every Dexie table into one JSON blob and triggers a browser download.
+
+Settings → Data → "Import" now accepts two inputs via [`importAll(raw, { merge })`](../src/ml/data-ops.ts):
+
+- a **`.json`** backup → **full replace** (the whole database is overwritten)
+- a debug-bundle **`.zip`** (read by [`zipReader.ts`](../src/dashboard/zipReader.ts)) → **merge**: unions `events` / `feedback` with exact dedupe (idempotent re-import), skips derived tables, keeps local `kv` and only adopts *absent* keys
+
+Either path then runs an automatic warm-up chain: rebuild aggregates → train embeddings → rebuild sequence memory → replay implicit training → retrain forest. Merge mode makes recovery from a shared debug bundle safe and repeatable.
 
 ## See also
 

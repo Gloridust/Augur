@@ -40,6 +40,28 @@
 >   See [NEXT-PARADIGM.md](NEXT-PARADIGM.md) for what remains (L2-full
 >   pretrained embeddings, L3 two-tower, L4 hazard, L5 task graph).
 >
+> **Update — v9 / v0.4.2 shipped since Phases 0–5:**
+> - **`dinAttention` (model `recommend:v9`, feature #30).** A DIN-style
+>   (Deep Interest Network, Alibaba KDD'18) target-attention feature:
+>   candidate-as-query attention over the last 8 focused domains
+>   (temperature 0.25, recency prior 0.85), parameter-free, reusing the
+>   skip-gram embeddings ([`attention.ts`](../src/ml/attention.ts)). The
+>   recommend head is now **30 features**; the ensemble is LR +
+>   RandomForest + optional TinyMLP (wide-&-deep, off by default,
+>   enable-able once it has ≥50 trained groups). Version bumped v8→v9;
+>   `STALE_KEYS` + auto-warmup updated per the cross-cutting rule.
+> - **Cleanup ("Head B") overhaul.** A bulk **"Declutter"** sweep with
+>   rule-based staleness tiers (`never_opened` / `stale_week` / `stale_day`
+>   / `stale`) that bypass the conservative 0.55 model threshold for a
+>   review-then-close UI, plus a stale-tab count **badge** on the toolbar
+>   icon. (The plan's "don't touch cleanup" note referred to the *model*;
+>   this adds a rule-based bulk surface alongside it, not a model change.)
+> - **Data durability.** Stable manifest `key` (pins the extension ID /
+>   IndexedDB across install paths) + `unlimitedStorage` (eviction-exempt);
+>   `importAll` merge mode + debug-bundle `.zip` import with an automatic
+>   warm-up chain; persistent local error log (`errorLog:v1`). See
+>   STORAGE.md / PRIVACY.md.
+>
 > **Verification is the user's to run** (the dev environment has no event
 > data). Prime directive stands: keep a change iff backtest hit@3 improves,
 > or holds while hit@1 / recall@pool / calibration improve. Anything that

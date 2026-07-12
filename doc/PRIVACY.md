@@ -6,7 +6,7 @@ What Augur observes, where it stores it, and what (if anything) leaves the brows
 
 ## 1. The promise
 
-> **Local-first.** Every event, every feature vector, every model weight, every bandit posterior, every embedding lives on the user's device. No telemetry, no analytics, no error reporting, no cloud sync, no remote calls — except for one footnote (favicons, see §3).
+> **Local-first.** Every event, every feature vector, every model weight, every bandit posterior, every embedding, every logged error lives on the user's device. No telemetry, no analytics, no error reporting, no cloud sync, no remote calls — except for one footnote (favicons, see §3).
 
 This is not just a marketing claim — it's a constraint that shaped every architectural decision:
 
@@ -84,6 +84,9 @@ Declared in [`src/manifest.ts`](../src/manifest.ts):
 | `storage` | Use `chrome.storage.session` / `local` | Runtime state, AI chat sync |
 | `alarms` | Schedule periodic tasks | Heartbeat, decay, embedding retrain |
 | `idle` | Detect idle state | Pause focus accounting; `isIdle` cleanup feature |
+| `unlimitedStorage` | Exempt the extension's IndexedDB from Chrome's disk-pressure eviction and lift the quota cap | Protect the event log + trained model weights from best-effort eviction (a known data-loss vector) |
+
+Also set: a stable `key` field (RSA-2048 public key) in the manifest. It pins the extension ID independent of the install path — without it, Chrome derives the ID from the directory, so loading the unpacked build from a different path spins up a *fresh, empty* IndexedDB (this wiped ~27k events of training history on 2026-07-05). The private key was generated once and discarded — it is stored nowhere. Together with `unlimitedStorage`, this closes both known data-loss vectors. No privacy surface: the key is a public key, grants nothing, and reaches no network.
 
 **No `host_permissions`** — Augur literally cannot inject scripts into your tabs or read their content. It only sees what the `tabs` API exposes (URL, title, favicon URL, pinned state, group id).
 
@@ -127,6 +130,10 @@ After wiping, the model is back to cold-start. Re-seed from history via the same
 - Backing up before a clean OS reinstall
 
 The export is plain JSON — readable in any text editor.
+
+### Error log
+
+Augur keeps a persistent error ring-buffer (the last 200 entries, each `{ts, context, message, stack}`) in the `kv` table under key `errorLog:v1`. Global service-worker `error` / `unhandledrejection` handlers plus previously-swallowed catch sites feed it. It is **100% local — no network, no reporting**, consistent with the local-first stance above. It only ever leaves the device if the user manually exports **and shares** a debug bundle: the exported bundle includes an `errors.json` file (and an `errors` count in `MANIFEST.json`). Nothing is sent anywhere automatically.
 
 ## 10. What Augur is not
 

@@ -46,6 +46,7 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 - **Smart Suggestions** rerank ~80 candidate domains every time the focused tab changes — model considers frecency, time-of-day, day-of-week, recency, embedding similarity to current page, last-24h velocity, and "did I just visit this in the past 30 min". · **智能推荐**每次切换聚焦标签都会对 ~80 个候选域名重排，模型同时看：衰减频次、时段、星期、最近访问、与当前页的嵌入相似度、最近 24 小时访问速度、最近 30 分钟会话上下文。
 - **Pin row** uses the same model — pins reorder by predicted relevance, with a 6-hour cooldown after you drag so manual arrangements stick. · **置顶行**用同一个模型——按预测相关度自动重排，但**手动拖动后 6 小时内冻结**，保证你刚整理好的不被打散。
 - **Cleanup card** flags open tabs you're about to abandon. Three-key feedback (close / stash / keep) trains the model in real time. · **清理卡片**标记你即将放弃的标签。三键反馈（关掉 / 暂存 / 保留）实时训练模型。
+- **Declutter** — for tab-hoarders. One button opens a review sheet of *every* stale tab, grouped by tier (never-viewed / idle ≥1w / ≥1d / ≥2h), safe tiers pre-checked, bulk close or stash. A count badge on the toolbar icon keeps the zombie total visible even when you're not on the dashboard. · **整理**：给标签囤积党。一键列出**所有**不活跃标签，按时效分层（从未查看 / 一周+ / 一天+ / 数小时），安全分层默认勾选，批量关闭或暂存。工具栏图标常驻显示僵尸标签数。
 
 ### 🪄 Augur AI · 本地 AI 对话
 
@@ -80,7 +81,8 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 - Italiana display wordmark · Iowan / Charter / Source Serif body — paper aesthetic throughout. · Italiana 衬线 wordmark + 系统衬线正文，整套纸面美学。
 - 3D mechanical "expansion ball" greeting mark that follows your cursor. · 问候语左侧是会跟随光标转动的 3D 机械伸缩球。
 - Onboarding modal with privacy promise + learning-progress widget. · 首次引导：隐私承诺 + 实时学习进度。
-- Settings dialog: name, language, data export / wipe, **model debug panel** with live LR coefficients + bandit α/β + nearest-neighbor preview. · 设置面板：姓名、语言、数据导出 / 清除、**模型调试面板**（实时 LR 系数 + bandit α/β + 最近邻预览）。
+- Settings dialog: name, language, data export / **import** / wipe, **model debug panel** with live LR coefficients + bandit α/β + nearest-neighbor preview + backtest. Import accepts a `.json` backup (full replace) or a debug-bundle `.zip` (merge lost history back in, deduped, then auto-retrains every model). · 设置面板：姓名、语言、数据导出 / **导入** / 清除、**模型调试面板**（实时 LR 系数 + bandit α/β + 最近邻预览 + 回测）。导入支持 `.json` 备份（整体替换）或调试包 `.zip`（合并找回历史、去重、自动重训所有模型）。
+- **Durable by design**: a stable manifest `key` pins the extension ID (and its IndexedDB) across reloads/paths, and `unlimitedStorage` exempts it from Chrome's eviction — your months of learned history don't silently vanish. · **数据不丢**：固定的 manifest `key` 钉死扩展 ID 与数据库（跨重载/路径不变），`unlimitedStorage` 豁免 Chrome 驱逐——积累几个月的学习历史不会悄悄清零。
 - Toast feedback for every destructive action. · 每个破坏性操作都有 toast 反馈。
 
 ---
@@ -118,22 +120,24 @@ Then in Chrome / Edge / Brave: · 在 Chrome / Edge / Brave 里：
 │               time-series velocity, sessions)   │
 │             │                                   │
 │             ▼                                   │
-│   ┌── Head A · Open recommender ─────────────┐ │
-│   │   features → LogReg(11) → Bandit         │ │
-│   │   + Skip-gram embeddings (32-dim)        │ │
-│   │   + Platt calibration (a, b)             │ │
-│   └──┬───────────────────────────────────────┘ │
-│      │                                          │
-│      └──► Smart Suggestions │ Pin reranking │  │
-│           Cold-start candidate generation       │
-│                                                 │
-│   ┌── Head B · Cleanup recommender ──────────┐ │
-│   │   features → LogReg(14) → Bandit         │ │
-│   │   + Platt calibration (a, b)             │ │
-│   └──┬───────────────────────────────────────┘ │
-│      │                                          │
-│      └──► Inline cleanup card                   │
-└────────────────────────────────────────────────┘
+│   ┌── Head A · Open recommender (v9) ─────────┐ │
+│   │   feat(30) → LogReg + RandomForest        │ │
+│   │            + optional TinyMLP (wide&deep) │ │
+│   │   + Skip-gram embeddings (32-dim)         │ │
+│   │   + 3-timescale seq memory + DIN attn     │ │
+│   │   + Platt + blend calibration             │ │
+│   └──┬────────────────────────────────────────┘ │
+│      │                                           │
+│      └──► Smart Suggestions │ Pin reranking │   │
+│           OracleHint │ Cold-start candidates      │
+│                                                  │
+│   ┌── Head B · Cleanup recommender ───────────┐ │
+│   │   feat(26) → LogReg → Bandit + Platt      │ │
+│   │   + rule-based Declutter tiers (bulk)     │ │
+│   └──┬────────────────────────────────────────┘ │
+│      │                                           │
+│      └──► Inline card │ Declutter │ stale badge  │
+└─────────────────────────────────────────────────┘
                           ▲
                           │ chrome.runtime.sendMessage
                           │ (typed RpcRequest union)
@@ -156,21 +160,21 @@ Three places need to answer "is this URL relevant **right now** for **this user*
 
 ### Feature pipeline · 特征管线
 
-Every recommendation features include: · 每条推荐都包含：
+The open head is now a **30-feature ensemble** (`recommend:v9`): `LogReg + RandomForest + optional TinyMLP`, blended and calibrated. Feature families (full list + rationale in [doc/ML.md](doc/ML.md) §2): · 开启头现在是 30 特征的集成模型（LR + 随机森林 + 可选 wide&deep MLP），完整列表见 [doc/ML.md](doc/ML.md)：
 
 | Family · 类 | Features · 特征 |
 |---|---|
-| **Frecency · 衰减频次** | `freqDecay` (Σ exp(-Δt/τ), τ=14d) · 域名级访问衰减 |
-| **Engagement · 投入度** | `avgFocusMs`, `domainCloseQuickRate`, `domainCloseWithoutFocusRate` (Cleanup head only) |
-| **Temporal · 时段** | `hourMatch`, `dowMatch` — softmaxed hour & day-of-week histograms · 24×7 直方图 softmax |
-| **Cyclic time · 周期编码** | `hourSin`, `hourCos`, `dowSin`, `dowCos` — sin/cos projection so 23h ≈ 0h · 让模型在邻近时段间平滑泛化 |
-| **Recency · 最近性** | `recencyHours` since last visit |
-| **Time-series · 时序** | `visitVelocity` (24h vs 14d baseline), `sessionContext` (visited in last 30 min) |
-| **Co-occurrence · 共现** | `cooccurrenceWithFocused` — pair counts within 5-min windows, decayed (τ=30d) |
-| **Embedding · 嵌入** | `embedSimToFocused` — cosine in 32-dim skip-gram space, retrained every 12h on co-occurrence |
+| **Frecency / engagement · 频次/投入** | `freqDecay` (τ=14d), `avgFocusMs` |
+| **Temporal · 时段** | `hourMatch`, `dowMatch` (softmaxed histograms) + cyclic `hourSin/Cos`, `dowSin/Cos` (23h ≈ 0h) |
+| **Recency / time-series · 最近性/时序** | `recencyHours`, `visitVelocity` (24h vs 14d), `sessionContext` (last 30 min) |
+| **Co-occurrence / embedding · 共现/嵌入** | `cooccurrenceWithFocused`, `embedSimToFocused` (32-dim skip-gram, retrained every 12h) |
+| **Sequence memory (v4) · 序列记忆** | `seqProbShort`, `seqProbLong`, `seqProbTime` — three timescales, LR learns the mix |
+| **Directed / session / decision (v8) · 有向/会话/决策** | `transitionAffinity`, `sessionSim`, `sessionCohesion`, `minutesIntoSession`, `isSessionStart`, `hourActivityZ`, `banditLogit`, `prefixConcentration` |
+| **Semantic + factorized (v8) · 语义/因子化** | `titleSimToFocused`, `titleSimToSession` (hashed text vectors), `factorizedTransition` (u·v) |
+| **Target attention (v9) · 目标注意力** | `dinAttention` — DIN-style candidate-as-query attention over the recent focus history |
 | **State · 状态** | `isCurrentlyOpen`, `isPinnedSomewhere` |
 
-The cleanup head additionally uses per-tab + per-window state: `tabAgeMs`, `timeSinceFocusMs`, `focusMs`, `focusCount`, `focusRate`, `isPinned`, `isGrouped`, `sameDomainOpenCount`, `embedSimToOpen`, `isDiscarded`, `tabIndex` (normalized position in window strip), `isInActiveWindow`, `windowSameDomainCount`, `isInNamedGroup`, `navCount` (in-tab navigations since open), `isIdle` (system-level chrome.idle state). Tabs with `tab.audible === true` are hard-excluded from candidates — never auto-flagged regardless of model score. · 清理头额外用每个标签 + 所在窗口的状态特征；正在播放音视频的 tab 被硬性排除，不会被模型勾选。
+The cleanup head (26 features) additionally uses per-tab + per-window state: `tabAgeMs`, `timeSinceFocusMs`, `focusMs`, `focusCount`, `focusRate`, `isPinned`, `isGrouped`, `sameDomainOpenCount`, `embedSimToOpen`, `isDiscarded`, `tabIndex`, `isInActiveWindow`, `windowSameDomainCount`, `isInNamedGroup`, `navCount`, `isIdle`. Tabs with `tab.audible === true` are hard-excluded — never auto-flagged. The **Declutter** bulk sweep adds rule-based staleness tiers on top (never-viewed / stale ≥1w / ≥1d / ≥2h) that bypass the conservative model threshold for a review-then-close surface. · 清理头额外用每标签+窗口状态；正在播放的 tab 硬性排除。批量「整理」在模型之上叠加了基于时效的规则分层。
 
 ### Online training · 在线学习
 
