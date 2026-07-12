@@ -36,6 +36,13 @@ export default defineManifest({
     'storage',
     'alarms',
     'idle',
+    // Exempts our IndexedDB (all events + trained models) from Chrome's
+    // best-effort storage eviction under disk pressure, and lifts the quota
+    // cap. Everything Augur learns lives in IndexedDB, so durable storage is
+    // the difference between "survives a low-disk day" and "silently wiped".
+    // Together with the stable `key` above (which pins the extension ID),
+    // this closes both known data-loss vectors.
+    'unlimitedStorage',
   ],
   // We intentionally do NOT use chrome_url_overrides.newtab — registering a
   // newtab override permanently attaches Chrome's "Customize Chrome /
