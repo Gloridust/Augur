@@ -81,6 +81,8 @@ export const RECOMMEND_FEATURE_NAMES: Array<keyof RecommendFeatures> = [
   'titleSimToFocused',
   'titleSimToSession',
   'factorizedTransition',
+  // ── v9: DIN-style target attention over the focus history ───────────
+  'dinAttention',
 ];
 
 // Cyclic encoding: project an integer position on a circle of period N to
@@ -225,6 +227,8 @@ export async function buildRecommendFeatures(args: {
   titleSimToFocused?: number;
   titleSimToSession?: number;
   factorizedTransition?: number;
+  // ── v9: DIN target attention, default 0.5 = neutral ──
+  dinAttention?: number;
   now: number;
 }): Promise<RecommendFeatures> {
   const {
@@ -249,9 +253,10 @@ export async function buildRecommendFeatures(args: {
     titleSimToFocused,
     titleSimToSession,
     factorizedTransition,
+    dinAttention,
     now,
   } = args;
-  // Pack the v8 additions once — identical in both return branches below.
+  // Pack the v8+v9 additions once — identical in both return branches below.
   const v8 = {
     transitionAffinity: transitionAffinity ?? 0,
     sessionSim: sessionSim ?? 0,
@@ -264,6 +269,7 @@ export async function buildRecommendFeatures(args: {
     titleSimToFocused: titleSimToFocused ?? 0,
     titleSimToSession: titleSimToSession ?? 0,
     factorizedTransition: factorizedTransition ?? 0,
+    dinAttention: dinAttention ?? 0.5,
   };
   const hourCyc = cyclic(context.hour, 24);
   const dowCyc = cyclic(context.dow, 7);

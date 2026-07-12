@@ -31,7 +31,7 @@ const KV_CLEANUP_MODEL = 'model:cleanup:v4';
 // multiplicative bandit blend is gone — the bandit is a learned feature
 // now. Bumping resets the Adam/weight state so the new objective trains
 // clean; auto-warmup re-fits from the existing event log on update.
-const KV_RECOMMEND_MODEL = 'model:recommend:v8';
+const KV_RECOMMEND_MODEL = 'model:recommend:v9'; // v9: +dinAttention (30 features)
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
 const KV_RECOMMEND_FOREST = 'model:recommend:forest:v2'; // feature shape changed
 const KV_EVAL_HISTORY = 'evalHistory:v1';

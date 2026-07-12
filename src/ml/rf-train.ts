@@ -12,6 +12,7 @@
 import { db } from '../shared/db';
 import type { TabEvent } from '../shared/types';
 import { getDomainStats } from './aggregate';
+import { dinAttention } from './attention';
 import { getEmbedding } from './embedding-train';
 import {
   buildCleanupFeatures,
@@ -224,6 +225,7 @@ export async function trainRecommendForest(): Promise<{
           return sessTextVec && v ? textCosine(v, sessTextVec) : 0;
         })(),
         factorizedTransition: focusedDomain ? transition.score(focusedDomain, domain) : 0.5,
+        dinAttention: dinAttention(embedding, focusHistory, domain),
         now: ts,
       });
       return vectorFromRecommend(features);

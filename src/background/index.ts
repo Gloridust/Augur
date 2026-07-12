@@ -14,9 +14,10 @@ import {
   nudgeRecommendOnClose,
   trainImplicitOpen,
 } from '../ml/recommend';
-import { trainRecommendForest } from '../ml/rf-train';
+import { replayImplicitTraining, trainRecommendForest } from '../ml/rf-train';
 import { buildCleanupFeatures } from '../ml/features';
 import {
+  RECOMMEND_MODEL_VERSION,
   saveSequenceMemory,
   setLastAggregateAt,
 } from '../ml/persistence';
@@ -351,6 +352,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       'model:recommend:v5', // bumped to v6 when negative-sample distribution was fixed
       'model:recommend:v6', // bumped to v7 when mixture (easy+hard) sampling landed
       'model:recommend:v7', // bumped to v8: +8 features, group-softmax, switch filter
+      'model:recommend:v8', // bumped to v9: +dinAttention (30 features)
       'model:recommend:forest:v1', // forest feature shape changed (v1 → v2)
     ];
     let staleDeleted = 0;
@@ -399,17 +401,16 @@ async function warmupRecommendIfNeeded(): Promise<void> {
   if (warmupAttempted) return;
   warmupAttempted = true;
   try {
-    const recRow = await db.kv.get('model:recommend:v8');
+    // RECOMMEND_MODEL_VERSION (not a hardcoded key): this used to say
+    // 'model:recommend:v8' and would silently stop warming after every
+    // schema bump — the exact drift a named constant exists to prevent.
+    const recRow = await db.kv.get(RECOMMEND_MODEL_VERSION);
     const rec = recRow?.value as { trainedSamples?: number } | undefined;
     const trained = rec?.trainedSamples ?? 0;
     if (trained >= WARMUP_MIN_SAMPLES) return;
     const eventCount = await db.events.count();
     if (eventCount < WARMUP_MIN_EVENTS) return;
 
-    const { replayImplicitTraining, trainRecommendForest } = await import(
-      '../ml/rf-train'
-    );
-    const { invalidateForestCache } = await import('../ml/recommend');
     const replayResult = await replayImplicitTraining();
     const forestResult = await trainRecommendForest();
     invalidateForestCache();

@@ -286,6 +286,12 @@ export interface RecommendFeatures {
   // Generalizing next-domain score from learned u(context)·v(target)
   // vectors — fires even for (from→to) pairs the count tables never saw.
   factorizedTransition: number;
+  // ── v9: DIN-style target attention (ml/attention.ts) ────────────────
+  // Candidate-as-query attention over the recent focus history: "does this
+  // candidate strongly continue ANY recent thread?" Sharper than the
+  // session-centroid sessionSim in multi-task sessions; wider than the
+  // last-domain-only embedSimToFocused. 0.5 = neutral / out-of-vocabulary.
+  dinAttention: number;
 }
 
 export interface RecommendationContext {

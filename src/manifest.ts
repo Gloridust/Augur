@@ -6,12 +6,13 @@ export default defineManifest({
   description: '__MSG_extDescription__',
   version: '0.4.2',
   default_locale: 'en',
-  // key: '<paste the output of `npm run extension-key`>',
-  // Without `key`, Chrome derives the extension ID from the install path,
-  // so reloading from a different directory creates a NEW extension ID
-  // with a fresh IndexedDB. Setting `key` to a stable RSA-2048 public key
-  // pins the ID across rebuilds. Run `npm run extension-key` to generate
-  // one. The Chrome Web Store ignores this field on publish.
+  // Stable extension ID. Without `key`, Chrome derives the ID from the
+  // install path, so reloading from a different directory creates a NEW
+  // extension ID with a fresh IndexedDB — exactly how a month of training
+  // history got wiped on 2026-07-05. This RSA-2048 public key (generated via
+  // `npm run extension-key`; the private key was discarded) pins the ID
+  // across all paths and rebuilds. The Chrome Web Store ignores this field.
+  key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1BdHHoLz5cKtQPhqMMZ+lTNbdbsKaqRcNyabe/CMBNve7yEyrSTEGRg9xQ73USvBq1aGAOAwYSdFvHYNpbqb5HpU9rvbNr/Ttscf1T9usJkytD7JzjXVbWxST0k4oG+vsLU0KkYPlNvWowZa4/3dpXVesOZUt1ahoPr01jR82vLdnBL2uEBklVZoBBgznLssiHiBfMwPExZKsIUnjj1wGcg0UHEgNw4rxhPE6VCzWZFUXZUsL029pxNHYkDOChIO9+ubcbIx3zWhdc6UcOt6X1V6s86EAUy/vLFERLT4+d8ZfENvBYYClgdZYgNNFXK6mk+PCgFqzvwjgs6+DA4QewIDAQAB',
   background: {
     service_worker: 'src/background/index.ts',
     type: 'module',

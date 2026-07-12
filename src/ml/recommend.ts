@@ -1,5 +1,6 @@
 import { db, extractDomain } from '../shared/db';
 import { logError } from '../shared/errorlog';
+import { dinAttention } from './attention';
 import type {
   DomainStats,
   OpenCandidate,
@@ -264,6 +265,8 @@ function v8FeatureInputs(ctx: ScoringContext, domain: string) {
     factorizedTransition: ctx.focusedDomain
       ? ctx.transition.score(ctx.focusedDomain, domain)
       : 0.5,
+    // v9: candidate-as-query attention over the recent focus history.
+    dinAttention: dinAttention(ctx.embedding, ctx.focusHistory, domain),
   };
 }
 
@@ -608,6 +611,7 @@ export async function trainImplicitOpen(
       titleSimToFocused: focusedDomain ? textSim(domainText, domain, focusedDomain) : 0,
       titleSimToSession: sessTextVec && dtVec ? textCosine(dtVec, sessTextVec) : 0,
       factorizedTransition: focusedDomain ? transition.score(focusedDomain, domain) : 0.5,
+      dinAttention: dinAttention(embedding, focusHistory, domain),
       now: event.ts,
     });
   };
