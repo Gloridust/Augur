@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: '__MSG_extName__',
   description: '__MSG_extDescription__',
-  version: '0.4.1',
+  version: '0.4.2',
   default_locale: 'en',
   // key: '<paste the output of `npm run extension-key`>',
   // Without `key`, Chrome derives the extension ID from the install path,
