@@ -12,7 +12,7 @@ import type {
   WorkspaceTab,
 } from './types';
 import type { InsightsBundle } from '../ml/insights';
-import type { DataDump, ModelInspection } from '../ml/data-ops';
+import type { ModelInspection } from '../ml/data-ops';
 import type { StashInput } from '../ml/stash';
 import type { PinRerankInput, PinRerankRow } from '../ml/pins';
 
@@ -52,12 +52,11 @@ export type RpcRequest =
   | { kind: 'model.setMlp'; enabled: boolean }
   | { kind: 'insights.get' }
   | { kind: 'data.summary' }
-  | { kind: 'data.export' }
+  | { kind: 'data.flush' }
+  | { kind: 'data.invalidate' }
   | { kind: 'data.wipe' }
   | { kind: 'data.resetModels' }
   | { kind: 'data.bootstrapHistory'; force?: boolean }
-  | { kind: 'data.exportDebugBundle' }
-  | { kind: 'data.import'; dump: unknown; merge?: boolean }
   | {
       // Dashboard-initiated event log entry. `partial` is a TabEvent without
       // ts/hour/dow (SW stamps those). Used for product-surface events like
@@ -87,7 +86,11 @@ export type RpcResponse =
   | { ok: true; kind: 'cleanup.sweep'; data: CleanupSweep }
   | { ok: true; kind: 'insights.get'; data: InsightsBundle }
   | { ok: true; kind: 'data.summary'; data: DataSummary }
-  | { ok: true; kind: 'data.export'; data: DataDump }
+  | {
+      ok: true;
+      kind: 'data.flush';
+      data: { featureNames: { cleanup: readonly string[]; recommend: readonly string[] } };
+    }
   | { ok: true; kind: 'model.inspect'; data: ModelInspection }
   | { ok: true; kind: 'stash.list'; data: StashedTab[] }
   | { ok: true; kind: 'stash.add'; data: number[] }
@@ -116,6 +119,10 @@ export type RpcResponse =
         skipped: number;
         model: { hit1: number; hit3: number; hit5: number; mrr: number; recallAtPool: number };
         baseline: { hit1: number; hit3: number; hit5: number; mrr: number };
+        ci: { hit1: [number, number]; hit3: [number, number]; hit5: [number, number] };
+        ensemble: string;
+        byKind: Record<'typed' | 'link' | 'inTab', { n: number; hit1: number; hit3: number; baselineHit3: number }>;
+        novel: number;
         tookMs: number;
       };
     }
@@ -142,17 +149,6 @@ export type RpcResponse =
       ok: true;
       kind: 'data.bootstrapHistory';
       data: { events: number; domains: number; skipped: boolean; reason?: string };
-    }
-  | {
-      ok: true;
-      kind: 'data.exportDebugBundle';
-      // Base64-encoded zip bytes — dashboard converts to Blob and downloads.
-      data: { filename: string; base64: string; size: number };
-    }
-  | {
-      ok: true;
-      kind: 'data.import';
-      data: { ok: boolean; reason?: string; counts?: Record<string, number> };
     }
   | { ok: true; kind: 'ack' }
   | { ok: false; error: string };

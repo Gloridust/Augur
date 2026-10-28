@@ -351,7 +351,7 @@ export function ModelDebugPanel() {
   const runEval = async (mode: 'replay' | 'backtest') => {
     setBusy(true);
     try {
-      const r = await evaluateModel({ sample: 60, mode, splitDays: 7 });
+      const r = await evaluateModel({ sample: 250, mode, splitDays: 7 });
       if (r) {
         setEvalResult(r);
         setEvalHistory(await fetchEvalHistory());
@@ -576,6 +576,7 @@ export function ModelDebugPanel() {
                 n: evalResult.evaluated,
                 ms: evalResult.tookMs,
               })}
+              {evalResult.ensemble ? ` · ${evalResult.ensemble}` : ''}
             </Typography>
             <Box
               component="table"
@@ -596,6 +597,7 @@ export function ModelDebugPanel() {
                 <tr>
                   <th>{t('debug.metric')}</th>
                   <th>{t('debug.modelCol')}</th>
+                  <th>{t('debug.ci95')}</th>
                   <th>{t('debug.baselineCol')}</th>
                   <th>Δ</th>
                 </tr>
@@ -605,10 +607,14 @@ export function ModelDebugPanel() {
                   const m = evalResult.model[k];
                   const b = evalResult.baseline[k];
                   const delta = m - b;
+                  const ci = k === 'mrr' ? undefined : evalResult.ci?.[k];
                   return (
                     <tr key={k}>
                       <td>{k === 'mrr' ? 'MRR' : `hit@${k.slice(3)}`}</td>
                       <td>{(m * 100).toFixed(1)}%</td>
+                      <td style={{ color: 'var(--mui-palette-text-secondary)' }}>
+                        {ci ? `${(ci[0] * 100).toFixed(0)}–${(ci[1] * 100).toFixed(0)}%` : '—'}
+                      </td>
                       <td>{(b * 100).toFixed(1)}%</td>
                       <td
                         style={{
@@ -633,9 +639,30 @@ export function ModelDebugPanel() {
                   <td>{(evalResult.model.recallAtPool * 100).toFixed(1)}%</td>
                   <td>—</td>
                   <td>—</td>
+                  <td>—</td>
                 </tr>
               </tbody>
             </Box>
+            {evalResult.byKind && (
+              <Stack spacing={0.25} sx={{ mt: 1.5 }}>
+                {(['typed', 'link', 'inTab'] as const).map((k) => {
+                  const v = evalResult.byKind[k];
+                  if (!v || v.n === 0) return null;
+                  return (
+                    <Typography key={k} variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      {t(`debug.kind.${k}`)} · n={v.n} · hit@1 {(v.hit1 * 100).toFixed(0)}% · hit@3{' '}
+                      {(v.hit3 * 100).toFixed(0)}% ({t('debug.baselineCol')} {(v.baselineHit3 * 100).toFixed(0)}%)
+                    </Typography>
+                  );
+                })}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  {t('debug.novelTargets', {
+                    n: evalResult.novel,
+                    pct: evalResult.evaluated ? Math.round((evalResult.novel / evalResult.evaluated) * 100) : 0,
+                  })}
+                </Typography>
+              </Stack>
+            )}
           </Card>
         )}
         {evalHistory.length > 1 && (

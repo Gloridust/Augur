@@ -16,11 +16,8 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import type { OpenCandidate } from '../../shared/types';
-import {
-  fetchOpenRecommendations,
-  openUrlViaSw,
-  reportOpenFeedback,
-} from '../api/recommendations';
+import { openUrlViaSw, reportOpenFeedback } from '../api/recommendations';
+import { onTabActivity, sharedOpenRecommendations } from '../liveRefresh';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { usePins } from '../hooks/usePins';
 import { LearningEmptyState } from './LearningEmptyState';
@@ -51,10 +48,10 @@ export function Suggestions({ dense = false }: Props) {
   const { summary } = useDataSummary();
   const { isPinned, add: pinAdd, remove: pinRemove } = usePins();
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (fresh = true) => {
     setLoading(true);
     try {
-      const data = await fetchOpenRecommendations();
+      const data = await sharedOpenRecommendations({ fresh });
       setItems(data);
     } finally {
       setLoading(false);
@@ -62,26 +59,12 @@ export function Suggestions({ dense = false }: Props) {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    // First load shares OracleHint's in-flight request.
+    void refresh(false);
     // Refresh when the active tab changes — recommendations key off the
     // currently focused domain (co-occurrence, embedding similarity), so a
     // stale list right after the user switches contexts is misleading.
-    if (!chrome?.tabs?.onActivated) return;
-    let pending = false;
-    const trigger = () => {
-      if (pending) return;
-      pending = true;
-      window.setTimeout(() => {
-        pending = false;
-        void refresh();
-      }, 800);
-    };
-    chrome.tabs.onActivated.addListener(trigger);
-    chrome.tabs.onUpdated.addListener(trigger);
-    return () => {
-      chrome.tabs.onActivated.removeListener(trigger);
-      chrome.tabs.onUpdated.removeListener(trigger);
-    };
+    return onTabActivity(() => void refresh(), { events: ['activated', 'updated'], delayMs: 800 });
   }, [refresh]);
 
   const onOpen = async (c: OpenCandidate) => {
@@ -117,7 +100,7 @@ export function Suggestions({ dense = false }: Props) {
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Tooltip title={t('actions.refresh')}>
-          <IconButton onClick={refresh} size="small" sx={{ p: 0.5 }}>
+          <IconButton onClick={() => void refresh()} size="small" sx={{ p: 0.5 }}>
             <RefreshIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>

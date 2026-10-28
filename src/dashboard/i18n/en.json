@@ -328,7 +328,8 @@
       "sequence": "rebuild sequence memory",
       "replay": "replay implicit training",
       "forest": "retrain forest"
-    }
+    },
+    "exportFailed": "Export failed — please try again."
   },
   "debug": {
     "heads": "Prediction models",
@@ -350,11 +351,11 @@
     "rebuildAggregates": "Rebuild aggregates",
     "rebuildAggregatesTooltip": "Recompute domain statistics and co-occurrence pairs from the event log. Use if aggregate counts seem out of sync.",
     "evaluation": "Prediction quality",
-    "evaluationHint": "Replays your recent browsing through the current model and measures how often the domain you actually opened ranked in the top results — compared against a no-ML frecency baseline. Run before and after a model change to see whether it helped.",
+    "evaluationHint": "Measures how often the domain you actually opened ranked in the top results, against a no-ML frecency baseline. Every feature is rebuilt point-in-time, so nothing from the future leaks in. The 95% interval shows the noise: differences smaller than it are not real.",
     "evaluate": "Run evaluation",
-    "evaluateTooltip": "Replay: scores the last ~60 historical switch-opens with the current model. Optimistic (the model has seen this data); use the delta, not the absolute number.",
+    "evaluateTooltip": "Replay: scores the last ~250 historical switch-opens with the current model, using only what was known at each moment. Optimistic (the model has trained on this data); compare deltas, not absolute numbers.",
     "backtest": "Run backtest",
-    "backtestTooltip": "Trains a FRESH model on events older than 7 days, then scores the newer ones it never saw — a genuine generalization number (no leakage). Slower. Aggregates/embeddings stay at current state.",
+    "backtestTooltip": "Trains FRESH models (logistic regression + forest, plus the MLP if enabled) on switch-opens older than 7 days, then scores the newer ones they never saw, with features rebuilt from past events only — the honest generalization number. Slower. Embeddings stay at current state.",
     "evaluateFailed": "Evaluation failed — check the extension console.",
     "evaluatedOn": "Replay on {{n}} historical opens in {{ms}} ms. Higher is better; Δ is model minus baseline.",
     "backtestedOn": "Backtest on {{n}} held-out opens in {{ms}} ms (fresh model, trained only on older events).",
@@ -378,7 +379,14 @@
     "updated": "updated",
     "bandits": "Exploration weights (top arms by impressions)",
     "cleanupBandit": "Cleanup",
-    "recommendBandit": "Recommend"
+    "recommendBandit": "Recommend",
+    "ci95": "95% CI",
+    "kind": {
+      "typed": "Typed in a new tab",
+      "link": "New tab from a link",
+      "inTab": "Link in the same tab"
+    },
+    "novelTargets": "{{n}} targets ({{pct}}%) were first-ever visits — no model can rank those, so 100% − {{pct}}% is the ceiling."
   },
   "palette": {
     "placeholder": "Search tabs, history, bookmarks, commands…",

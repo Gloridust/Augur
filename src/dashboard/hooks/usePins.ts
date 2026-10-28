@@ -4,6 +4,7 @@ import { db, extractDomain } from '../../shared/db';
 import type { PinnedItem } from '../../shared/types';
 import { isCooldownActive, useSmartPinSort } from './useSmartPinSort';
 import { logUiEvent, rerankPinsViaModel } from '../api/recommendations';
+import { onTabActivity } from '../liveRefresh';
 
 export interface AddPinInput {
   url: string;
@@ -24,7 +25,11 @@ export interface UsePinsResult {
   isPinned: (url: string) => boolean;
 }
 
-export function usePins(): UsePinsResult {
+// `ranked`: only the pins row needs model-ordered pins. Other consumers
+// (suggestion cards, tab wall) just need isPinned/add/remove, and must not
+// each run their own rerank RPC on every tab switch.
+export function usePins(opts: { ranked?: boolean } = {}): UsePinsResult {
+  const ranked = opts.ranked === true;
   const rawPins = useLiveQuery(
     () => db.pins.orderBy('manualOrder').toArray(),
     [],
@@ -37,14 +42,14 @@ export function usePins(): UsePinsResult {
 
   // Whether smart sort is currently active. Both flags must be true.
   const cooldownNow = isCooldownActive();
-  const smartActive = smartSortEnabled && !cooldownNow;
+  const smartActive = ranked && smartSortEnabled && !cooldownNow;
 
   // Refresh model scores whenever pins change OR smart sort flips on. We
   // also rerun every time the active tab changes so context-sensitive
   // features (focused domain, session context) stay current.
   useEffect(() => {
     if (!smartActive || rawPins.length === 0) {
-      setModelScores(new Map());
+      setModelScores((prev) => (prev.size === 0 ? prev : new Map()));
       return;
     }
     let cancelled = false;
@@ -58,27 +63,13 @@ export function usePins(): UsePinsResult {
       setModelScores(map);
     };
     void fetchScores();
-
-    if (typeof chrome !== 'undefined' && chrome?.tabs?.onActivated) {
-      let pending = false;
-      const trigger = () => {
-        if (pending) return;
-        pending = true;
-        window.setTimeout(() => {
-          pending = false;
-          void fetchScores();
-        }, 800);
-      };
-      chrome.tabs.onActivated.addListener(trigger);
-      chrome.tabs.onUpdated.addListener(trigger);
-      return () => {
-        cancelled = true;
-        chrome.tabs.onActivated.removeListener(trigger);
-        chrome.tabs.onUpdated.removeListener(trigger);
-      };
-    }
+    const off = onTabActivity(() => void fetchScores(), {
+      events: ['activated', 'updated'],
+      delayMs: 800,
+    });
     return () => {
       cancelled = true;
+      off();
     };
   }, [rawPins, smartActive]);
 
@@ -105,10 +96,8 @@ export function usePins(): UsePinsResult {
     };
   }, [rawPins, modelScores, smartActive]);
 
-  const isPinned = useCallback(
-    (url: string) => rawPins.some((p) => p.url === url),
-    [rawPins],
-  );
+  const pinnedUrls = useMemo(() => new Set(rawPins.map((p) => p.url)), [rawPins]);
+  const isPinned = useCallback((url: string) => pinnedUrls.has(url), [pinnedUrls]);
 
   const add = useCallback(async (input: AddPinInput) => {
     const key = pinKeyFromUrl(input.url);

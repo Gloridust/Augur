@@ -7,6 +7,7 @@ import HourglassTopIcon from '@mui/icons-material/HourglassTop';
 import StarIcon from '@mui/icons-material/Star';
 import type { TodayRecap as TodayRecapData } from '../../shared/types';
 import { fetchTodayRecap } from '../api/recommendations';
+import { visiblePoll } from '../liveRefresh';
 
 interface StatProps {
   icon: React.ReactNode;
@@ -61,16 +62,15 @@ export function TodayRecap() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchTodayRecap().then((d) => {
-      if (!cancelled) setData(d);
-    });
-    const handle = window.setInterval(async () => {
-      const d = await fetchTodayRecap();
-      if (!cancelled) setData(d);
-    }, 60_000);
+    const load = () =>
+      void fetchTodayRecap().then((d) => {
+        if (!cancelled) setData(d);
+      });
+    load();
+    const stop = visiblePoll(load, 60_000);
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      stop();
     };
   }, []);
 

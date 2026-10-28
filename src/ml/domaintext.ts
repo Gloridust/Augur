@@ -24,9 +24,10 @@ export interface DomainTextState {
   updatedAt: number;
 }
 
-function empty(): DomainTextState {
+export function emptyDomainText(): DomainTextState {
   return { byDomain: {}, updatedAt: 0 };
 }
+const empty = emptyDomainText;
 
 const cache = lazy<DomainTextState>(async () => {
   const row = await db.kv.get(KV_KEY);
@@ -45,11 +46,26 @@ export async function observeDomainText(
   url: string | undefined,
   now: number,
 ): Promise<void> {
+  if (!domain || domain.startsWith('chrome') || !pageText(title, url)) return;
+  const s = await loadDomainText();
+  applyDomainText(s, domain, title, url, now);
+  markDirty('domainText', async () => {
+    await db.kv.put({ key: KV_KEY, value: s, updatedAt: s.updatedAt });
+  });
+}
+
+// The pure update, shared with the point-in-time replay (./pit).
+export function applyDomainText(
+  s: DomainTextState,
+  domain: string,
+  title: string | undefined,
+  url: string | undefined,
+  now: number,
+): void {
   if (!domain || domain.startsWith('chrome')) return;
   const text = pageText(title, url);
   if (!text) return;
   const emb = embedText(text);
-  const s = await loadDomainText();
   const cur = s.byDomain[domain];
   if (!cur) {
     s.byDomain[domain] = { vec: Array.from(emb), n: 1 };
@@ -62,9 +78,6 @@ export async function observeDomainText(
     cur.n = n;
   }
   s.updatedAt = now;
-  markDirty('domainText', async () => {
-    await db.kv.put({ key: KV_KEY, value: s, updatedAt: s.updatedAt });
-  });
 }
 
 export async function pruneDomainText(now: number): Promise<void> {

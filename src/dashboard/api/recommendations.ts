@@ -13,7 +13,15 @@ import type {
 } from '../../shared/types';
 import { callRpc } from '../../shared/rpc';
 import type { InsightsBundle } from '../../ml/insights';
-import type { DataDump, ModelInspection } from '../../ml/data-ops';
+import type { ModelInspection } from '../../ml/data-ops';
+import {
+  backupFilename,
+  buildDebugBundle,
+  encodeBackup,
+  parseBackupFile,
+  readAllTables,
+  writeDumpToDb,
+} from '../../shared/backup';
 import type { StashInput } from '../../ml/stash';
 import type { PinRerankInput, PinRerankRow } from '../../ml/pins';
 
@@ -82,11 +90,6 @@ export async function fetchSummary(): Promise<DataSummary | null> {
   return r.ok && r.kind === 'data.summary' ? r.data : null;
 }
 
-export async function exportAllData(): Promise<DataDump | null> {
-  const r = await callRpc({ kind: 'data.export' });
-  return r.ok && r.kind === 'data.export' ? r.data : null;
-}
-
 export async function wipeAllData(): Promise<void> {
   await callRpc({ kind: 'data.wipe' });
 }
@@ -109,30 +112,63 @@ export async function seedFromBrowserHistory(
   return r.ok && r.kind === 'data.bootstrapHistory' ? r.data : null;
 }
 
-// Trigger the SW to build a debug zip bundle and return its bytes
-// (base64-encoded since chrome.runtime messages must be JSON-serializable).
-// Caller decodes and triggers a browser download.
-export interface DebugBundleData {
-  filename: string;
-  base64: string;
-  size: number;
-}
-export async function exportDebugBundle(): Promise<DebugBundleData | null> {
-  const r = await callRpc({ kind: 'data.exportDebugBundle' });
-  return r.ok && r.kind === 'data.exportDebugBundle' ? r.data : null;
+// ── Backup / restore / debug bundle ──────────────────────────────────────
+// The page does the table I/O itself (shared/backup.ts): a full dump can
+// exceed the 64 MiB runtime-message cap. The SW only flushes pending model
+// writes before a read and drops its caches around a write.
+
+function download(bytes: Uint8Array, filename: string, type: string): void {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  // Revoke on the next tick: some Chrome builds cancel a download whose
+  // object URL is revoked synchronously after click().
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export interface ImportResultData {
-  ok: boolean;
-  reason?: string;
-  counts?: Record<string, number>;
+async function flushSw(): Promise<{ cleanup: readonly string[]; recommend: readonly string[] }> {
+  const r = await callRpc({ kind: 'data.flush' });
+  if (!r.ok || r.kind !== 'data.flush') throw new Error('flush failed');
+  return r.data.featureNames;
 }
-export async function importAllData(
-  dump: unknown,
-  opts: { merge?: boolean } = {},
-): Promise<ImportResultData | null> {
-  const r = await callRpc({ kind: 'data.import', dump, merge: opts.merge === true });
-  return r.ok && r.kind === 'data.import' ? r.data : null;
+
+export async function exportBackupFile(): Promise<{ size: number }> {
+  await flushSw();
+  const bytes = await encodeBackup(await readAllTables());
+  download(bytes, backupFilename(), 'application/gzip');
+  return { size: bytes.length };
+}
+
+export async function exportDebugBundleFile(): Promise<{ size: number }> {
+  const featureNames = await flushSw();
+  const { filename, bytes } = await buildDebugBundle(featureNames);
+  download(bytes, filename, 'application/zip');
+  return { size: bytes.length };
+}
+
+export type ImportOutcome =
+  | { ok: true; merged: boolean; counts: Record<string, number> }
+  | { ok: false; reason: 'bad-file' | 'not-augur-backup' | 'failed' };
+
+// Backup (.json / .json.gz) → REPLACE; debug bundle (.zip) → MERGE, which
+// recovers lost history without discarding what this install learned since.
+export async function importBackupFile(file: File): Promise<ImportOutcome> {
+  const parsed = await parseBackupFile(new Uint8Array(await file.arrayBuffer()));
+  if (parsed.kind === 'invalid') return { ok: false, reason: 'bad-file' };
+  const merge = parsed.kind === 'bundle';
+  await callRpc({ kind: 'data.invalidate' });
+  try {
+    const r = await writeDumpToDb(parsed.dump, { merge });
+    if (!r.ok) return { ok: false, reason: r.reason === 'not-augur-backup' ? 'not-augur-backup' : 'failed' };
+    return { ok: true, merged: merge, counts: r.counts ?? {} };
+  } catch {
+    return { ok: false, reason: 'failed' };
+  } finally {
+    // Anything the SW cached or marked dirty while we wrote is stale.
+    await callRpc({ kind: 'data.invalidate' }).catch(() => undefined);
+  }
 }
 
 // Log a product-surface event from the dashboard. Used for telemetry the
@@ -192,6 +228,15 @@ export interface EvalReportData {
   skipped: number;
   model: EvalMetrics & { recallAtPool: number };
   baseline: EvalMetrics;
+  // Wilson 95% intervals for the model's hit rates.
+  ci: { hit1: [number, number]; hit3: [number, number]; hit5: [number, number] };
+  // Ensemble members scored (backtest: split-trained ones), e.g. "lr+forest".
+  ensemble: string;
+  // Per kind of open: typed (the new-tab moment), link (new tab from a
+  // link), inTab (link followed in the same tab).
+  byKind: Record<'typed' | 'link' | 'inTab', { n: number; hit1: number; hit3: number; baselineHit3: number }>;
+  // Targets never visited before — unreachable for any ranker.
+  novel: number;
   tookMs: number;
 }
 export async function evaluateModel(
@@ -199,7 +244,7 @@ export async function evaluateModel(
 ): Promise<EvalReportData | null> {
   const r = await callRpc({
     kind: 'model.evaluate',
-    sample: opts.sample ?? 60,
+    sample: opts.sample ?? 250,
     mode: opts.mode ?? 'replay',
     splitDays: opts.splitDays,
   });

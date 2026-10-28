@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { extractDomain } from '../../shared/db';
 import type { DomainGroup, WindowGroup } from '../../shared/types';
+import { onTabActivity } from '../liveRefresh';
 
 export interface UseTabsResult {
   tabs: chrome.tabs.Tab[];
@@ -50,23 +51,13 @@ export function useTabs(): UseTabsResult {
   useEffect(() => {
     refresh();
     if (!chrome?.tabs) return;
-    const onChanged = () => refresh();
-    chrome.tabs.onCreated.addListener(onChanged);
-    chrome.tabs.onRemoved.addListener(onChanged);
-    chrome.tabs.onUpdated.addListener(onChanged);
-    chrome.tabs.onMoved.addListener(onChanged);
-    chrome.tabs.onActivated.addListener(onChanged);
-    chrome.tabs.onAttached.addListener(onChanged);
-    chrome.tabs.onDetached.addListener(onChanged);
-    return () => {
-      chrome.tabs.onCreated.removeListener(onChanged);
-      chrome.tabs.onRemoved.removeListener(onChanged);
-      chrome.tabs.onUpdated.removeListener(onChanged);
-      chrome.tabs.onMoved.removeListener(onChanged);
-      chrome.tabs.onActivated.removeListener(onChanged);
-      chrome.tabs.onAttached.removeListener(onChanged);
-      chrome.tabs.onDetached.removeListener(onChanged);
-    };
+    // Tab events arrive in bursts (a page load is several onUpdated calls,
+    // closing a window is one onRemoved per tab): coalesce them into one
+    // query, and skip entirely while this dashboard is in a background tab.
+    return onTabActivity(refresh, {
+      events: ['created', 'removed', 'updated', 'moved', 'activated', 'attached', 'detached'],
+      delayMs: 150,
+    });
   }, [refresh]);
 
   const groups = useMemo<DomainGroup[]>(() => {

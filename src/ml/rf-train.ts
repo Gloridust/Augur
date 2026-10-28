@@ -30,6 +30,7 @@ import {
 } from './recommend';
 import { outcomeFeatures, trainCleanupOutcome } from './cleanup';
 import { discardDirty } from './flush';
+import type { BetaBandit } from './models/bandit';
 import { DomainSequenceMemory } from './models/markov';
 import { RandomForest } from './models/randomforest';
 import { saveRecommendForest, saveSequenceMemory } from './persistence';
@@ -74,16 +75,11 @@ function dwellAfter(
   return 0;
 }
 
-// Models for a point-in-time walk: the sequence memory and transition model
-// are the walk's own (rebuilt as of each point); the rest are current.
-async function pitModels(pit: PointInTimeAggregates): Promise<ModelBundle> {
-  const live = await liveModels();
-  return {
-    ...live,
-    seq: pit.seq,
-    transition: pit.transition,
-    hourActivityZ: (h) => pit.hourActivityZ(h),
-  };
+// Models for a point-in-time walk: everything is rebuilt as of each point
+// except the bandit (explicit feedback; today's unless the caller — the
+// backtest — supplies one).
+async function pitModels(pit: PointInTimeAggregates, bandit?: BetaBandit): Promise<ModelBundle> {
+  return pit.models(bandit ?? (await liveModels()).bandit);
 }
 
 // ── Random forest ──────────────────────────────────────────────────────
@@ -95,23 +91,26 @@ export async function trainRecommendForest(
   // endTs: train only on events before this instant (the backtest uses the
   // split point so the forest never sees test-period events).
   // persist=false: return the forest without overwriting the live one.
-  opts: { endTs?: number; persist?: boolean } = {},
+  // bandit: the bandit to build features with (default: the live one).
+  opts: { endTs?: number; persist?: boolean; bandit?: BetaBandit } = {},
 ): Promise<{
   trained: number;
   posSamples: number;
   negSamples: number;
   forest?: RandomForest;
 }> {
-  const endTs = opts.endTs ?? Date.now();
   const persist = opts.persist ?? true;
-  const windowStart = endTs - POSITIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
   // Full history before endTs: cumulative aggregates (visit counts, hour
   // histograms) need everything, not just the window.
-  const events = await db.events.where('ts').below(endTs).toArray();
+  const events = await db.events.where('ts').below(opts.endTs ?? Infinity).toArray();
   if (events.length === 0) return { trained: 0, posSamples: 0, negSamples: 0 };
+  // The lookback is anchored to the newest event, not the wall clock: after
+  // a month away (or on an imported backup) "the last 30 days" of wall time
+  // holds no events and the forest would silently train on nothing.
+  const windowStart = events[events.length - 1].ts - POSITIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 
   const pit = new PointInTimeAggregates();
-  const models = await pitModels(pit);
+  const models = await pitModels(pit, opts.bandit);
   const dwellIdx = buildDwellIndex(events);
   const lastPositiveTs = new Map<string, number>();
   const groups: Array<{ x: number[][]; w: number }> = [];
@@ -131,11 +130,13 @@ export async function trainRecommendForest(
         dow: e.dayOfWeek,
         focusHistory: point.focusHistory,
         focusedDomain: point.focusedDomain,
+        openDomains: point.openDomains,
         sessionStartTs: point.sessionStartTs,
       },
       models,
     );
-    const exclude = new Set([domain, point.focusedDomain ?? '']);
+    // Same exclusions as live training: open domains are never candidates.
+    const exclude = new Set([domain, point.focusedDomain ?? '', ...point.openDomains]);
     const negs: string[] = [];
     const hard = models.seq
       .topPredictions(point.focusHistory, fc.hour, e.ts, 10)
@@ -173,7 +174,7 @@ export async function trainRecommendForest(
   }
 
   const forest = RandomForest.fit(X, y, {
-    seed: Math.floor(Date.now() / 1000),
+    seed: Math.floor(Math.random() * 2 ** 31),
     weights: W,
   });
   if (persist) await saveRecommendForest(forest);
@@ -190,7 +191,7 @@ export async function rebuildSequenceMemory(): Promise<{
   // Only focus events, straight off the [type+ts] index.
   const events = await db.events
     .where('[type+ts]')
-    .between(['focus', 0], ['focus', Date.now()], true, true)
+    .between(['focus', 0], ['focus', Infinity], true, true)
     .toArray();
   const seq = new DomainSequenceMemory();
   const history: string[] = [];
@@ -221,17 +222,21 @@ export async function rebuildSequenceMemory(): Promise<{
 // Replay implicit training for both heads over the newest REPLAY_CAP events
 // (point-in-time features; the walk itself covers all history so cumulative
 // aggregates are right). Doesn't reset weights — appends gradient steps.
-// Used to warm up freshly-bumped models and after trainer changes. The walk
-// also rebuilds the sequence memory and factorized transition model exactly
-// as the SW would have learned them, and installs those as the live ones.
-const REPLAY_CAP = 5000;
+// Used to warm up freshly-bumped models and after an import. The walk also
+// rebuilds the sequence memory and factorized transition model exactly as
+// the SW would have learned them, and installs those as the live ones.
+// The cap was 5000 events — about five days for a heavy user, so a warm-up
+// trained on a sliver of history. The walk covers everything regardless and
+// a training point costs ~2 ms, so the cap now only bounds pathological logs.
+const REPLAY_CAP = 60_000;
 
-export async function replayImplicitTraining(): Promise<{
+export async function replayImplicitTraining(opts: { cap?: number } = {}): Promise<{
   openSamples: number;
   cleanupSamples: number;
 }> {
   const events = await db.events.orderBy('ts').toArray();
-  const windowStart = events.length > REPLAY_CAP ? events[events.length - REPLAY_CAP].ts : -Infinity;
+  const cap = opts.cap ?? REPLAY_CAP;
+  const windowStart = events.length > cap ? events[events.length - cap].ts : -Infinity;
   const pit = new PointInTimeAggregates();
   const models = await pitModels(pit);
   const dwellIdx = buildDwellIndex(events);
@@ -302,7 +307,7 @@ export async function replayImplicitTraining(): Promise<{
       const trained = await trainImplicitOpen(e, {
         focusHistory: point.focusHistory,
         focusedDomain: point.focusedDomain,
-        openDomains: point.focusHistory,
+        openDomains: point.openDomains,
         recentlyFocusedDomains: point.recentlyFocused,
         sessionStartTs: point.sessionStartTs,
         sampleWeight: sampleWeight(dwellAfter(dwellIdx, tid, e.ts), e.openedFrom),

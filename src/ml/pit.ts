@@ -11,18 +11,32 @@
 // events strictly before t, exactly as live serving sees the world.
 //
 // Mirrors the live rules exactly: domain stats + co-occurrence via the shared
-// AggregateReplayer, timeseries windows matching ./timeseries, and a sequence
+// AggregateReplayer, timeseries windows matching ./timeseries, a sequence
 // memory + factorized transition model trained on focus transitions the same
-// way the SW trains them (observeFocusTransition). Embeddings, the bandit,
-// URL prefixes and page-text vectors still come from their current state — a
-// diffuse residual leak, documented in doc/ML.md.
+// way the SW trains them (observeFocusTransition), the circadian histogram,
+// the URL-prefix and page-text tables through the same pure updates the
+// SW uses, and a skip-gram embedding trained one batch per 12 h of event
+// time on the co-occurrence known then — the SW's embeddingRetrain alarm.
+//
+// The embedding matters most. Built from today's tables it already knows
+// every co-visit that happens AFTER a training point; the trained scorers
+// learned to lean on that ("the candidate is embedding-close to where you
+// are" was true because it was computed from the outcome), and at real
+// prediction time — where the embedding only knows the past — they ranked
+// below plain frecency (July 2026 data, backtest hit@1 0.8%).
 
 import type { DomainStats, TabEvent } from '../shared/types';
 import { AggregateReplayer, pairCountAt, pairKey, topByFrecency } from './aggregate';
+import type { ModelBundle } from './candidate-features';
 import { hourActivityZFrom } from './circadian';
+import { applyDomainText, emptyDomainText } from './domaintext';
+import { trainEmbeddingOnPairs } from './embedding-train';
+import type { BetaBandit } from './models/bandit';
+import { SkipGramEmbedding } from './models/embedding';
 import { DomainSequenceMemory } from './models/markov';
 import { TransitionModel } from './models/transition';
 import type { AggregateSource } from './sources';
+import { applyUrlPrefix, emptyUrlPrefixes } from './urlprefix';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -30,6 +44,7 @@ const VELOCITY_WINDOW_MS = DAY;
 const VELOCITY_BASELINE_MS = 14 * DAY;
 const SESSION_MS = 30 * 60_000;
 const FOCUS_HISTORY_MAX = 8;
+const EMBED_TRAIN_EVERY_MS = 12 * HOUR; // = the SW's embeddingRetrain period
 
 // Deterministic PRNG so evaluation runs are repeatable.
 export function mulberry32(seed: number): () => number {
@@ -63,6 +78,10 @@ export class PointInTimeAggregates {
   readonly seq = new DomainSequenceMemory();
   readonly transition = new TransitionModel();
   readonly hourCounts = new Array<number>(24).fill(0);
+  readonly prefixes = emptyUrlPrefixes();
+  readonly domainText = emptyDomainText();
+  readonly embedding = new SkipGramEmbedding();
+  private nextEmbedTrain = -Infinity;
   private rng: () => number;
 
   constructor(seed = 1) {
@@ -71,6 +90,11 @@ export class PointInTimeAggregates {
 
   // Apply one event. Call AFTER building any features that describe it.
   advance(e: TabEvent): void {
+    if (e.ts >= this.nextEmbedTrain) {
+      // The alarm fires on wall time; a batch sees the tables as of then.
+      if (this.agg.pairs.size > 0) this.trainEmbeddingBatch(e.ts);
+      this.nextEmbedTrain = e.ts + EMBED_TRAIN_EVERY_MS;
+    }
     this.agg.apply(e);
     const d = e.domain;
     if (!d) return;
@@ -79,6 +103,8 @@ export class PointInTimeAggregates {
     if (e.type === 'open' || e.type === 'navigate') {
       push(this.activity, d, e.ts, e.ts - VELOCITY_BASELINE_MS);
       push(this.presence, d, e.ts, e.ts - SESSION_MS);
+      applyUrlPrefix(this.prefixes, d, e.url, e.ts);
+      applyDomainText(this.domainText, d, e.title, e.url, e.ts);
     } else if (e.type === 'focus') {
       push(this.presence, d, e.ts, e.ts - SESSION_MS);
       if (e.tabId === undefined) return;
@@ -102,6 +128,26 @@ export class PointInTimeAggregates {
   // the live table's nightly decay doesn't matter).
   hourActivityZ(hour: number): number {
     return hourActivityZFrom({ hourCounts: this.hourCounts, updatedAt: 0 }, hour);
+  }
+
+  // The learned models as of the walk's position. The bandit learns from
+  // explicit feedback (not replayed), so the caller supplies it.
+  models(bandit: BetaBandit): ModelBundle {
+    return {
+      embedding: this.embedding,
+      bandit,
+      seq: this.seq,
+      transition: this.transition,
+      prefixes: this.prefixes,
+      domainText: this.domainText,
+      hourActivityZ: (h) => this.hourActivityZ(h),
+    };
+  }
+
+  private trainEmbeddingBatch(now: number): void {
+    const pairs = [...this.agg.pairs.values()].map((p) => ({ a: p.a, b: p.b, count: pairCountAt(p, now) }));
+    trainEmbeddingOnPairs(this.embedding, pairs, this.rng);
+    this.embedding.markTrained(now);
   }
 
   // Aggregates as of `now` (strictly before it).

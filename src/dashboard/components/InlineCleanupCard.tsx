@@ -26,6 +26,7 @@ import {
 import { notifyStashChanged } from './StashSection';
 import { isCleanupSuppressed, suppressCleanup } from '../cleanupSuppression';
 import { toast } from './Toaster';
+import { onTabActivity } from '../liveRefresh';
 
 function fmtDuration(ms: number, t: (k: string, opts?: Record<string, unknown>) => string): string {
   if (ms < 60_000) return t('duration.seconds', { count: Math.round(ms / 1000) });
@@ -63,24 +64,10 @@ export function InlineCleanupCard() {
 
   useEffect(() => {
     void refresh();
-    if (!chrome?.tabs?.onActivated) return;
-    let pending = false;
-    const trigger = () => {
-      if (pending) return;
-      pending = true;
-      window.setTimeout(() => {
-        pending = false;
-        void refresh();
-      }, 800);
-    };
-    chrome.tabs.onActivated.addListener(trigger);
-    chrome.tabs.onRemoved.addListener(trigger);
-    chrome.tabs.onUpdated.addListener(trigger);
-    return () => {
-      chrome.tabs.onActivated.removeListener(trigger);
-      chrome.tabs.onRemoved.removeListener(trigger);
-      chrome.tabs.onUpdated.removeListener(trigger);
-    };
+    return onTabActivity(() => void refresh(), {
+      events: ['activated', 'removed', 'updated'],
+      delayMs: 800,
+    });
   }, [refresh]);
 
   if (!items || items.length === 0) return null;

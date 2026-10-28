@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Avatar,
@@ -68,6 +68,48 @@ function hueForWindow(windowId: number, indexOffset: number): number {
   const seed = (windowId * 2654435761) >>> 0;
   return (seed % 360 + indexOffset * 60) % 360;
 }
+
+// Density tokens — single source of truth for the row/header sizing knobs.
+// Module-level so the objects are referentially stable for memoized rows.
+const DENSE_SIZES = {
+  cardPadding: 1.25,
+  headerFavicon: 22,
+  rowFavicon: 14,
+  rowPaddingY: 0.4,
+  rowPaddingX: 0.75,
+  rowGap: 0.85,
+  headerGap: 1,
+  // 1 col on lg laptops (the right pane is narrow there), 2 cols once
+  // we have headroom — packs domain cards more efficiently on 1440+.
+  innerGridCols: { xs: '1fr', xl: 'repeat(2, 1fr)' },
+  cardSpacing: 1.5,
+  rowFontSize: 13,
+  domainFontSize: 13,
+  captionFontSize: 11,
+};
+
+const ROOMY_SIZES = {
+  cardPadding: 2,
+  headerFavicon: 32,
+  rowFavicon: 16,
+  rowPaddingY: 0.75,
+  rowPaddingX: 1,
+  rowGap: 1,
+  headerGap: 1.5,
+  innerGridCols: {
+    xs: '1fr',
+    sm: 'repeat(2, 1fr)',
+    md: 'repeat(3, 1fr)',
+    lg: 'repeat(4, 1fr)',
+    xl: 'repeat(5, 1fr)',
+  },
+  cardSpacing: 2,
+  rowFontSize: 14,
+  domainFontSize: 14,
+  captionFontSize: 12,
+};
+
+type Sizes = typeof DENSE_SIZES;
 
 interface Props {
   filter?: string;
@@ -162,14 +204,23 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     }
   }, [flatTabIds, focusedTabId]);
 
-  const toggle = (id: number) => {
+  const toggle = useCallback((id: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }, []);
+
+  const togglePin = useCallback(
+    (tab: chrome.tabs.Tab) => {
+      if (!tab.url) return;
+      if (isPinned(tab.url)) void pinRemove(tab.url);
+      else void pinAdd({ url: tab.url, title: tab.title ?? tab.url, favIconUrl: tab.favIconUrl });
+    },
+    [isPinned, pinAdd, pinRemove],
+  );
 
   const selectGroup = (groupTabs: chrome.tabs.Tab[]) => {
     setSelected((prev) => {
@@ -321,6 +372,9 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     if (hasAutoRunRef.current) return;
     if (tabs.length === 0) return;
     hasAutoRunRef.current = true;
+    // Preloaded in a background tab: the visibility handler below runs it
+    // when the user actually arrives.
+    if (document.visibilityState !== 'visible') return;
     void runSmartCleanup(false);
   }, [tabs.length, runSmartCleanup]);
 
@@ -472,44 +526,7 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     }
   };
 
-  // Density tokens — single source of truth for the row/header sizing knobs.
-  const sizes = dense
-    ? {
-        cardPadding: 1.25,
-        headerFavicon: 22,
-        rowFavicon: 14,
-        rowPaddingY: 0.4,
-        rowPaddingX: 0.75,
-        rowGap: 0.85,
-        headerGap: 1,
-        // 1 col on lg laptops (the right pane is narrow there), 2 cols once
-        // we have headroom — packs domain cards more efficiently on 1440+.
-        innerGridCols: { xs: '1fr', xl: 'repeat(2, 1fr)' },
-        cardSpacing: 1.5,
-        rowFontSize: 13,
-        domainFontSize: 13,
-        captionFontSize: 11,
-      }
-    : {
-        cardPadding: 2,
-        headerFavicon: 32,
-        rowFavicon: 16,
-        rowPaddingY: 0.75,
-        rowPaddingX: 1,
-        rowGap: 1,
-        headerGap: 1.5,
-        innerGridCols: {
-          xs: '1fr',
-          sm: 'repeat(2, 1fr)',
-          md: 'repeat(3, 1fr)',
-          lg: 'repeat(4, 1fr)',
-          xl: 'repeat(5, 1fr)',
-        },
-        cardSpacing: 2,
-        rowFontSize: 14,
-        domainFontSize: 14,
-        captionFontSize: 12,
-      };
+  const sizes = dense ? DENSE_SIZES : ROOMY_SIZES;
 
   return (
     <Box>
@@ -820,149 +837,21 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
                   </Tooltip>
                 </Box>
                 <Stack spacing={0} sx={{ flex: 1 }}>
-                  {group.tabs.map((tab) => {
-                    const isFocused = focusedTabId === tab.id;
-                    const isAiSuggested = tab.id !== undefined && aiSelected.has(tab.id);
-                    return (
-                      <Box
-                        key={tab.id}
-                        role="option"
-                        aria-selected={tab.id !== undefined && selected.has(tab.id)}
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: sizes.rowGap,
-                          px: sizes.rowPaddingX,
-                          py: sizes.rowPaddingY,
-                          borderRadius: 1.5,
-                          position: 'relative',
-                          transition:
-                            'background-color 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 220ms ease',
-                          backgroundColor: isFocused
-                            ? 'var(--mui-palette-action-selected)'
-                            : isAiSuggested
-                              ? 'rgba(194, 65, 12, 0.06)'
-                              : 'transparent',
-                          outline: isFocused
-                            ? '2px solid var(--mui-palette-primary-main)'
-                            : 'none',
-                          outlineOffset: -2,
-                          // Coral micro-glow marking AI-suggested tabs.
-                          // Persistent until the user closes/clears, even
-                          // if they uncheck the row — that's the visual
-                          // contract for "model proposed this".
-                          boxShadow: isAiSuggested
-                            ? '0 0 0 1px rgba(194, 65, 12, 0.32), 0 0 12px rgba(194, 65, 12, 0.30)'
-                            : 'none',
-                          animation: isAiSuggested
-                            ? 'augur-ai-glow 2.4s ease-in-out infinite'
-                            : 'none',
-                          '@keyframes augur-ai-glow': {
-                            '0%, 100%': {
-                              boxShadow:
-                                '0 0 0 1px rgba(194, 65, 12, 0.30), 0 0 10px rgba(194, 65, 12, 0.22)',
-                            },
-                            '50%': {
-                              boxShadow:
-                                '0 0 0 1px rgba(194, 65, 12, 0.40), 0 0 16px rgba(194, 65, 12, 0.36)',
-                            },
-                          },
-                          '&:hover': {
-                            backgroundColor: 'var(--mui-palette-action-hover)',
-                          },
-                        }}
-                        onMouseEnter={() => tab.id !== undefined && setFocusedTabId(tab.id)}
-                      >
-                        <Checkbox
-                          size="small"
-                          checked={tab.id !== undefined && selected.has(tab.id)}
-                          onChange={() => tab.id !== undefined && toggle(tab.id)}
-                          sx={{ p: 0.25 }}
-                        />
-                        {tab.pinned && (
-                          <PushPinIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                        )}
-                        {(mode === 'window' || dense) && tab.favIconUrl && (
-                          <Avatar
-                            src={tab.favIconUrl}
-                            variant="rounded"
-                            sx={{
-                              width: sizes.rowFavicon,
-                              height: sizes.rowFavicon,
-                              bgcolor: 'transparent',
-                            }}
-                          />
-                        )}
-                        <Typography
-                          sx={{
-                            flex: 1,
-                            minWidth: 0,
-                            fontSize: sizes.rowFontSize,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            cursor: 'pointer',
-                          }}
-                          title={tab.title ?? tab.url}
-                          onClick={() => activateTab(tab)}
-                        >
-                          {tab.title || tab.url}
-                        </Typography>
-                        <Tooltip
-                          title={
-                            tab.url && isPinned(tab.url)
-                              ? t('pins.unpin')
-                              : t('pins.pin')
-                          }
-                        >
-                          <IconButton
-                            size="small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (!tab.url) return;
-                              if (isPinned(tab.url)) {
-                                void pinRemove(tab.url);
-                              } else {
-                                void pinAdd({
-                                  url: tab.url,
-                                  title: tab.title ?? tab.url,
-                                  favIconUrl: tab.favIconUrl,
-                                });
-                              }
-                            }}
-                            sx={{
-                              p: 0.25,
-                              color:
-                                tab.url && isPinned(tab.url) ? 'primary.main' : 'inherit',
-                            }}
-                          >
-                            {tab.url && isPinned(tab.url) ? (
-                              <PushPinIcon sx={{ fontSize: 14 }} />
-                            ) : (
-                              <PushPinOutlinedIcon sx={{ fontSize: 14 }} />
-                            )}
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title={tab.url ?? ''}>
-                          <IconButton
-                            size="small"
-                            onClick={() => activateTab(tab)}
-                            sx={{ p: 0.25 }}
-                          >
-                            <OpenInNewIcon sx={{ fontSize: 14 }} />
-                          </IconButton>
-                        </Tooltip>
-                        <IconButton
-                          size="small"
-                          onClick={() => tab.id !== undefined && closeTabs([tab.id])}
-                          sx={{ p: 0.25 }}
-                          aria-label={t('tabs.closeOne')}
-                        >
-                          <CloseIcon sx={{ fontSize: 14 }} />
-                        </IconButton>
-                      </Box>
-                    );
-                  })}
+                  {group.tabs.map((tab) => (
+                    <TabRow
+                      key={tab.id}
+                      tab={tab}
+                      focused={focusedTabId === tab.id}
+                      checked={tab.id !== undefined && selected.has(tab.id)}
+                      aiSuggested={tab.id !== undefined && aiSelected.has(tab.id)}
+                      pinned={!!tab.url && isPinned(tab.url)}
+                      showFavicon={mode === 'window' || dense}
+                      sizes={sizes}
+                      onHover={setFocusedTabId}
+                      onToggle={toggle}
+                      onTogglePin={togglePin}
+                    />
+                  ))}
                 </Stack>
               </Card>
             );
@@ -984,3 +873,123 @@ export function TabWall({ filter: externalFilter, dense = false }: Props) {
     </Box>
   );
 }
+
+interface TabRowProps {
+  tab: chrome.tabs.Tab;
+  focused: boolean;
+  checked: boolean;
+  aiSuggested: boolean;
+  pinned: boolean;
+  showFavicon: boolean;
+  sizes: Sizes;
+  onHover: (id: number) => void;
+  onToggle: (id: number) => void;
+  onTogglePin: (tab: chrome.tabs.Tab) => void;
+}
+
+// One row of the tab wall. Memoized: hovering moves the keyboard focus ring,
+// which used to re-render every row of every card (a heavy user has 50+);
+// now only the two rows whose `focused` flips re-render.
+const TabRow = memo(function TabRow({
+  tab,
+  focused,
+  checked,
+  aiSuggested,
+  pinned,
+  showFavicon,
+  sizes,
+  onHover,
+  onToggle,
+  onTogglePin,
+}: TabRowProps) {
+  const { t } = useTranslation();
+  return (
+    <Box
+      role="option"
+      aria-selected={checked}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: sizes.rowGap,
+        px: sizes.rowPaddingX,
+        py: sizes.rowPaddingY,
+        borderRadius: 1.5,
+        position: 'relative',
+        transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
+        backgroundColor: focused
+          ? 'var(--mui-palette-action-selected)'
+          : aiSuggested
+            ? 'rgba(194, 65, 12, 0.06)'
+            : 'transparent',
+        outline: focused ? '2px solid var(--mui-palette-primary-main)' : 'none',
+        outlineOffset: -2,
+        // Coral micro-glow marking AI-suggested tabs. Persistent until the
+        // user closes/clears, even if they uncheck the row — that's the
+        // visual contract for "model proposed this". Static: an infinitely
+        // animated box-shadow repaints every row on every frame.
+        boxShadow: aiSuggested
+          ? '0 0 0 1px rgba(194, 65, 12, 0.34), 0 0 12px rgba(194, 65, 12, 0.28)'
+          : 'none',
+        '&:hover': {
+          backgroundColor: 'var(--mui-palette-action-hover)',
+        },
+      }}
+      onMouseEnter={() => tab.id !== undefined && onHover(tab.id)}
+    >
+      <Checkbox
+        size="small"
+        checked={checked}
+        onChange={() => tab.id !== undefined && onToggle(tab.id)}
+        sx={{ p: 0.25 }}
+      />
+      {tab.pinned && <PushPinIcon sx={{ fontSize: 14, color: 'text.secondary' }} />}
+      {showFavicon && tab.favIconUrl && (
+        <Avatar
+          src={tab.favIconUrl}
+          variant="rounded"
+          sx={{ width: sizes.rowFavicon, height: sizes.rowFavicon, bgcolor: 'transparent' }}
+        />
+      )}
+      <Typography
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: sizes.rowFontSize,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          cursor: 'pointer',
+        }}
+        title={tab.title ?? tab.url}
+        onClick={() => activateTab(tab)}
+      >
+        {tab.title || tab.url}
+      </Typography>
+      <Tooltip title={pinned ? t('pins.unpin') : t('pins.pin')}>
+        <IconButton
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePin(tab);
+          }}
+          sx={{ p: 0.25, color: pinned ? 'primary.main' : 'inherit' }}
+        >
+          {pinned ? <PushPinIcon sx={{ fontSize: 14 }} /> : <PushPinOutlinedIcon sx={{ fontSize: 14 }} />}
+        </IconButton>
+      </Tooltip>
+      <Tooltip title={tab.url ?? ''}>
+        <IconButton size="small" onClick={() => activateTab(tab)} sx={{ p: 0.25 }}>
+          <OpenInNewIcon sx={{ fontSize: 14 }} />
+        </IconButton>
+      </Tooltip>
+      <IconButton
+        size="small"
+        onClick={() => tab.id !== undefined && closeTabs([tab.id])}
+        sx={{ p: 0.25 }}
+        aria-label={t('tabs.closeOne')}
+      >
+        <CloseIcon sx={{ fontSize: 14 }} />
+      </IconButton>
+    </Box>
+  );
+});

@@ -2,11 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Avatar, Box } from '@mui/material';
 import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn';
 import type { OpenCandidate } from '../../shared/types';
-import {
-  fetchOpenRecommendations,
-  logUiEvent,
-  reportOpenFeedback,
-} from '../api/recommendations';
+import { logUiEvent, reportOpenFeedback } from '../api/recommendations';
+import { sharedOpenRecommendations, whenVisible } from '../liveRefresh';
 import { isOracleHintEnabled } from '../hooks/useOracleHintPref';
 
 // "Augur predicts" — Dynamic-Island-style capsule. Shows at the top of the
@@ -103,30 +100,34 @@ export function OracleHint() {
   useEffect(() => {
     if (!isOracleHintEnabled()) return;
     let cancelled = false;
-    void fetchOpenRecommendations().then((items) => {
-      if (cancelled) return;
-      if (items.length < 3 || items[0].score < CONFIDENCE_THRESHOLD) return;
-      // Margin gate — don't fire when #1 and #2 are too close to call.
-      if (items[0].score - items[1].score < MARGIN_THRESHOLD) return;
-      // Suppression check — if we recently showed (and the user didn't
-      // accept) this same top URL, don't show again. Prevents the
-      // "stuck top pick" failure mode from spamming the user.
-      const recentUrls = new Set(readRecent().map((e) => e.url));
-      if (recentUrls.has(items[0].url)) {
-        return;
-      }
-      setCandidates(items.slice(0, 3));
-      setSelectedSlot(1);
-      setVisible(true);
-      logUiEvent({
-        type: 'oracle_shown',
-        domains: items.slice(0, 3).map((c) => c.domain),
-        meta: {
-          scores: items.slice(0, 3).map((c) => c.score),
-          reasons: items.slice(0, 3).map((c) => c.reason),
-        },
+    // A dashboard preloaded in a background tab must not show (and log an
+    // impression for) a capsule nobody saw — wait until the page is visible.
+    void whenVisible()
+      .then(() => (cancelled ? [] : sharedOpenRecommendations()))
+      .then((items) => {
+        if (cancelled) return;
+        if (items.length < 3 || items[0].score < CONFIDENCE_THRESHOLD) return;
+        // Margin gate — don't fire when #1 and #2 are too close to call.
+        if (items[0].score - items[1].score < MARGIN_THRESHOLD) return;
+        // Suppression check — if we recently showed (and the user didn't
+        // accept) this same top URL, don't show again. Prevents the
+        // "stuck top pick" failure mode from spamming the user.
+        const recentUrls = new Set(readRecent().map((e) => e.url));
+        if (recentUrls.has(items[0].url)) {
+          return;
+        }
+        setCandidates(items.slice(0, 3));
+        setSelectedSlot(1);
+        setVisible(true);
+        logUiEvent({
+          type: 'oracle_shown',
+          domains: items.slice(0, 3).map((c) => c.domain),
+          meta: {
+            scores: items.slice(0, 3).map((c) => c.score),
+            reasons: items.slice(0, 3).map((c) => c.reason),
+          },
+        });
       });
-    });
     return () => {
       cancelled = true;
     };

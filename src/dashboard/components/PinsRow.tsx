@@ -130,7 +130,7 @@ function PinChip({
 
 export function PinsRow() {
   const { t } = useTranslation();
-  const { pins, smartSortApplied, remove, reorder } = usePins();
+  const { pins, smartSortApplied, remove, reorder } = usePins({ ranked: true });
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);

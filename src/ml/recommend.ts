@@ -410,7 +410,11 @@ export async function scoreOpenCandidates(
   const poolDomains = new Set(pool.map((p) => p.domain));
   const tryAdd = async (domain: string) => {
     if (!eligible(domain) || poolDomains.has(domain) || pool.length >= POOL_CAP) return;
-    pool.push((await src!.stats(domain)) ?? blankStat(domain));
+    const stats = await src!.stats(domain);
+    // Offline, the embedding is today's and knows domains first visited
+    // after the evaluated moment; admitting them would leak the future.
+    if (!stats && evaluation) return;
+    pool.push(stats ?? blankStat(domain));
     poolDomains.add(domain);
   };
   for (const { domain } of m.seq.topPredictions(focusHistory, fc.hour, now, 20)) {
@@ -573,6 +577,9 @@ export async function trainImplicitOpen(
   //      logEvent in the SW.)
   if (event.domain === focusedDomain) return false;
   if (ctx?.recentlyFocusedDomains?.includes(event.domain)) return false;
+  // Already open in another tab: serving never suggests an open domain, so
+  // this is not an instance of the task the head is trained for.
+  if (ctx?.openDomains?.includes(event.domain)) return false;
 
   const model = ctx?.modelOverride ?? (await getModel());
   const m = ctx?.models ?? (await liveModels());

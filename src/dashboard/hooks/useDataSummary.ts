@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchSummary } from '../api/recommendations';
 import type { DataSummary } from '../../shared/types';
+import { visiblePoll } from '../liveRefresh';
 
 export function useDataSummary(): {
   summary: DataSummary | null;
@@ -22,8 +23,7 @@ export function useDataSummary(): {
 
   useEffect(() => {
     void refresh();
-    const handle = window.setInterval(refresh, 60_000);
-    return () => window.clearInterval(handle);
+    return visiblePoll(() => void refresh(), 60_000);
   }, [refresh]);
 
   return { summary, refresh, loading };

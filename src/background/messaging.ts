@@ -6,9 +6,8 @@ import {
   trainCleanupFeedback,
 } from '../ml/cleanup';
 import {
-  exportAll,
-  exportDebugBundle,
-  importAll,
+  flushForExport,
+  invalidateAfterExternalWrite,
   getSummary,
   inspectModels,
   resetModelsOnly,
@@ -168,9 +167,13 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         const data = await getSummary();
         return { ok: true, kind: 'data.summary', data };
       }
-      case 'data.export': {
-        const data = await exportAll();
-        return { ok: true, kind: 'data.export', data };
+      case 'data.flush': {
+        const data = await flushForExport();
+        return { ok: true, kind: 'data.flush', data };
+      }
+      case 'data.invalidate': {
+        invalidateAfterExternalWrite();
+        return { ok: true, kind: 'ack' };
       }
       case 'data.wipe': {
         await wipeAll();
@@ -183,14 +186,6 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       case 'data.bootstrapHistory': {
         const data = await bootstrapFromHistory({ force: req.force === true });
         return { ok: true, kind: 'data.bootstrapHistory', data };
-      }
-      case 'data.exportDebugBundle': {
-        const data = await exportDebugBundle();
-        return { ok: true, kind: 'data.exportDebugBundle', data };
-      }
-      case 'data.import': {
-        const data = await importAll(req.dump, { merge: req.merge === true });
-        return { ok: true, kind: 'data.import', data };
       }
       case 'event.log': {
         // Dashboard-side product events (OracleHint accept, smart-cleanup
@@ -230,7 +225,7 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
       }
       case 'model.evaluate': {
         const data = await evaluateRecommend({
-          sample: req.sample ?? 60,
+          sample: req.sample ?? 250,
           mode: req.mode ?? 'replay',
           splitDays: req.splitDays,
           note: req.note,

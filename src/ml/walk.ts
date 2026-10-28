@@ -3,8 +3,10 @@
 // and the evaluator all walk with this, so they agree with each other and
 // with live training on:
 //   - which opens are "switch" training/test points (arrival on a new domain,
-//     not the focused domain, not seen in the last 2 min — the live rules),
-//   - the focus history and session start at each point,
+//     not the focused domain, not seen in the last 2 min, not already open in
+//     another tab — the live rules; serving never suggests an open domain,
+//     so an open domain is not a target either),
+//   - the focus history, session start and open-tab domains at each point,
 //   - and, via PointInTimeAggregates, the aggregates as of each point.
 //
 // onEvent is called for EVERY event, BEFORE the point-in-time state advances
@@ -23,6 +25,9 @@ export interface SwitchPoint {
   focusedDomain?: string;
   sessionStartTs: number;
   recentlyFocused: string[];
+  // Domains open in OTHER tabs (reconstructed from the log), as live
+  // serving/training get from the tab state map.
+  openDomains: string[];
 }
 
 export async function walkEvents(
@@ -32,6 +37,8 @@ export async function walkEvents(
 ): Promise<void> {
   const focusHistory: string[] = [];
   const recent: Array<{ domain: string; ts: number }> = [];
+  // Current domain of every tab the log has shown us; doubles as the
+  // open-tab set (a tab leaves it on close).
   const lastDomainByTab = new Map<number, string>();
   let sessionStartTs = events[0]?.ts ?? 0;
   let lastTs = sessionStartTs;
@@ -45,7 +52,6 @@ export async function walkEvents(
     const openLike = e.type === 'open' || e.type === 'navigate';
     if (openLike && e.domain && e.tabId !== undefined) {
       const arrival = e.type === 'open' || lastDomainByTab.get(e.tabId) !== e.domain;
-      lastDomainByTab.set(e.tabId, e.domain);
       const isBootstrap = (e.meta as Record<string, unknown> | undefined)?.source === 'history-bootstrap';
       const focusedDomain = focusHistory[focusHistory.length - 1];
       const recentlyFocused = recent.map((r) => r.domain);
@@ -56,16 +62,25 @@ export async function walkEvents(
         e.domain !== focusedDomain &&
         !recentlyFocused.includes(e.domain)
       ) {
-        point = {
-          event: e,
-          focusHistory: [...focusHistory],
-          focusedDomain,
-          sessionStartTs,
-          recentlyFocused,
-        };
+        const openDomains = new Set<string>();
+        for (const [tab, d] of lastDomainByTab) if (tab !== e.tabId) openDomains.add(d);
+        if (!openDomains.has(e.domain)) {
+          point = {
+            event: e,
+            focusHistory: [...focusHistory],
+            focusedDomain,
+            sessionStartTs,
+            recentlyFocused,
+            openDomains: [...openDomains],
+          };
+        }
       }
+      lastDomainByTab.set(e.tabId, e.domain);
     } else if (e.type === 'close' && e.tabId !== undefined) {
       lastDomainByTab.delete(e.tabId);
+    } else if (e.type === 'focus' && e.tabId !== undefined && e.domain) {
+      // Tabs opened before logging began first show up on focus.
+      lastDomainByTab.set(e.tabId, e.domain);
     }
 
     await onEvent(e, point);

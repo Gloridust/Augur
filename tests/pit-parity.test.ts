@@ -117,6 +117,8 @@ describe('evaluator', () => {
         const ts = t0 + day * 24 * HOUR + i * 10 * 60_000;
         events.push(ev({ type: 'open', ts, tabId: day * 10 + i, url: `https://${d}/`, domain: d }));
         events.push(ev({ type: 'focus', ts: ts + 500, tabId: day * 10 + i, url: `https://${d}/`, domain: d }));
+        // Closed before the next one opens — an open domain is never a target.
+        events.push(ev({ type: 'close', ts: ts + 5 * 60_000, tabId: day * 10 + i, url: `https://${d}/`, domain: d }));
       }
     }
     await w.db.events.bulkAdd(events);

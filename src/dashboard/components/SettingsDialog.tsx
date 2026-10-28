@@ -29,9 +29,9 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import {
-  exportAllData,
-  exportDebugBundle,
-  importAllData,
+  exportBackupFile,
+  exportDebugBundleFile,
+  importBackupFile,
   rebuildAggregates,
   rebuildSequenceMemory,
   replayImplicitTraining,
@@ -40,7 +40,6 @@ import {
   seedFromBrowserHistory,
   wipeAllData,
 } from '../api/recommendations';
-import { debugBundleToDump, isZipFile } from '../zipReader';
 import { toast } from './Toaster';
 import { useDataSummary } from '../hooks/useDataSummary';
 import { useUserNameField } from '../hooks/useUserName';
@@ -161,15 +160,9 @@ export function SettingsDialog({ open, onClose }: Props) {
   const onExport = async () => {
     setBusy(true);
     try {
-      const dump = await exportAllData();
-      if (!dump) return;
-      const blob = new Blob([JSON.stringify(dump)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `augur-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      await exportBackupFile();
+    } catch {
+      toast({ message: t('settings.exportFailed'), severity: 'error' });
     } finally {
       setBusy(false);
     }
@@ -204,55 +197,30 @@ export function SettingsDialog({ open, onClose }: Props) {
   const onImportFile = async (file: File) => {
     setBusy(true);
     try {
-      const buf = new Uint8Array(await file.arrayBuffer());
-      let parsed: unknown;
-      let merge = false;
-      if (isZipFile(buf)) {
-        // Debug bundle → MERGE (recover lost history into the current
-        // install without discarding what it has since learned).
-        try {
-          parsed = debugBundleToDump(buf);
-        } catch {
-          parsed = null;
-        }
-        if (!parsed) {
-          toast({ message: t('settings.importBadFile'), severity: 'error' });
-          return;
-        }
-        merge = true;
-      } else {
-        // JSON backup → REPLACE (restore semantics, unchanged).
-        try {
-          parsed = JSON.parse(new TextDecoder().decode(buf));
-        } catch {
-          toast({ message: t('settings.importBadFile'), severity: 'error' });
-          return;
-        }
-      }
-      const r = await importAllData(parsed, { merge });
-      if (!r || !r.ok) {
+      const r = await importBackupFile(file);
+      if (!r.ok) {
         toast({
           message:
-            r?.reason === 'not-augur-backup'
-              ? t('settings.importNotBackup')
-              : t('settings.importFailed'),
+            r.reason === 'bad-file'
+              ? t('settings.importBadFile')
+              : r.reason === 'not-augur-backup'
+                ? t('settings.importNotBackup')
+                : t('settings.importFailed'),
           severity: 'error',
         });
         return;
       }
-      const mergedEvents = r.counts?.events ?? 0;
       toast({
-        message: merge
-          ? t('settings.importMerged', { count: mergedEvents })
+        message: r.merged
+          ? t('settings.importMerged', { count: r.counts.events ?? 0 })
           : t('settings.importDone'),
         severity: 'success',
       });
-      // Rebuild + retrain everything on the merged history so the models are
-      // warm the moment the page comes back.
+      // Rebuild + retrain everything on the imported history so the models
+      // are warm the moment the page comes back.
       await runWarmup();
       toast({ message: t('settings.warmupDone'), severity: 'success' });
       onClose();
-      // Reload so the SW re-reads the imported models + the UI re-renders.
       window.location.reload();
     } finally {
       setBusy(false);
@@ -262,29 +230,13 @@ export function SettingsDialog({ open, onClose }: Props) {
   const onExportDebug = async () => {
     setBusy(true);
     try {
-      const bundle = await exportDebugBundle();
-      if (!bundle) {
-        toast({ message: t('settings.debugExportFailed'), severity: 'error' });
-        return;
-      }
-      // Decode base64 → Blob → download. The SW built the zip; we just
-      // hand the bytes to the browser.
-      const bin = atob(bundle.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const blob = new Blob([bytes], { type: 'application/zip' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = bundle.filename;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { size } = await exportDebugBundleFile();
       toast({
-        message: t('settings.debugExportDone', {
-          size: (bundle.size / 1024).toFixed(0),
-        }),
+        message: t('settings.debugExportDone', { size: (size / 1024).toFixed(0) }),
         severity: 'success',
       });
+    } catch {
+      toast({ message: t('settings.debugExportFailed'), severity: 'error' });
     } finally {
       setBusy(false);
     }
@@ -582,7 +534,7 @@ export function SettingsDialog({ open, onClose }: Props) {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/json,.json,application/zip,.zip"
+                  accept="application/json,.json,application/gzip,.gz,application/zip,.zip"
                   style={{ display: 'none' }}
                   onChange={(e) => {
                     const f = e.target.files?.[0];

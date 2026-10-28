@@ -31,9 +31,10 @@ export interface UrlPrefixState {
   updatedAt: number;
 }
 
-function empty(): UrlPrefixState {
+export function emptyUrlPrefixes(): UrlPrefixState {
   return { byDomain: {}, updatedAt: 0 };
 }
+const empty = emptyUrlPrefixes;
 
 const cache = lazy<UrlPrefixState>(async () => {
   const row = await db.kv.get(KV_KEY);
@@ -71,9 +72,21 @@ export async function bumpUrlPrefix(
   url: string | undefined,
   now: number,
 ): Promise<void> {
+  if (!domain || !prefixOf(url)) return;
+  const s = await loadUrlPrefixes();
+  applyUrlPrefix(s, domain, url, now);
+  persist(s);
+}
+
+// The pure update, shared with the point-in-time replay (./pit).
+export function applyUrlPrefix(
+  s: UrlPrefixState,
+  domain: string,
+  url: string | undefined,
+  now: number,
+): void {
   const prefix = prefixOf(url);
   if (!domain || !prefix) return;
-  const s = await loadUrlPrefixes();
   const list = s.byDomain[domain] ?? (s.byDomain[domain] = []);
   const hit = list.find((e) => e.prefix === prefix);
   if (hit) hit.count += 1;
@@ -84,7 +97,6 @@ export async function bumpUrlPrefix(
     s.byDomain[domain] = list.slice(0, TOP_PER_DOMAIN);
   }
   s.updatedAt = now;
-  persist(s);
 }
 
 export async function pruneUrlPrefixes(now: number): Promise<void> {
