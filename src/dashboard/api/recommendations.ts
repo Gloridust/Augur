@@ -237,6 +237,10 @@ export interface EvalReportData {
   byKind: Record<'typed' | 'link' | 'inTab', { n: number; hit1: number; hit3: number; baselineHit3: number }>;
   // Targets never visited before — unreachable for any ranker.
   novel: number;
+  // Hit rates on targets visited before (the ones any ranker could get).
+  reachable: { n: number; hit1: number; hit3: number; baselineHit3: number };
+  // Paired comparison with the baseline + exact McNemar p-value.
+  vsBaseline: Record<'hit1' | 'hit3', { modelOnly: number; baselineOnly: number; p: number }>;
   tookMs: number;
 }
 export async function evaluateModel(

@@ -74,6 +74,9 @@ fromChrome.on('data', (chunk) => {
   while ((i = inbuf.indexOf('\0')) >= 0) {
     const msg = JSON.parse(inbuf.slice(0, i));
     inbuf = inbuf.slice(i + 1);
+    if (msg.method === 'Runtime.consoleAPICalled' && process.env.E2E_DEBUG) {
+      console.log('SW>', msg.params.args.map((a) => a.value ?? a.description).join(' '));
+    }
     if (msg.id && pending.has(msg.id)) {
       const { resolve: res, reject: rej } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -111,6 +114,7 @@ try {
   check('stable extension ID (from manifest key)', extId === EXPECTED_ID, extId);
   const { sessionId: swS } = await send('Target.attachToTarget', { targetId: sw.targetId, flatten: true });
 
+  if (process.env.E2E_DEBUG) await send('Runtime.enable', {}, swS);
   const swEval = (code) => evaluate(swS, `(async () => { ${code} })()`);
   const idb = `
     const db = await new Promise((res, rej) => { const r = indexedDB.open('augur'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -145,8 +149,17 @@ try {
   await sleep(800);
   ids.news = await open(url('news', '/'));
   await sleep(800);
-  // Let the serial queue drain and the 5 s batched model write land.
-  await sleep(6500);
+  // Genuine switch-opens: brand-new sites (never seen, so not within the
+  // 2-min recently-seen window), with known-but-closed sites in the pool as
+  // the negatives they're ranked against.
+  for (const h of ['wiki', 'maps', 'music']) {
+    await send('Target.activateTarget', { targetId: ids.docs });
+    await sleep(300);
+    ids[h] = await open(url(h, '/'));
+    await sleep(700);
+  }
+  // Let the serial queue drain, then write pending model state.
+  await sleep(1500);
 
   // ── 3. Capture ───────────────────────────────────────────────────────
   const cap = await swEval(`${idb}
@@ -163,9 +176,16 @@ try {
   check('same-site route is not a visit; cross-site is', (visits['github.localhost'] ?? 0) >= 1 && (visits['stackoverflow.localhost'] ?? 0) === 1, JSON.stringify(visits));
 
   // ── 4. Processing + training ─────────────────────────────────────────
+  // Flush pending model writes the way an export does (data.flush), via a
+  // page so the request takes the normal runtime-message path.
+  const flushPage = await open(`chrome-extension://${extId}/src/dashboard/index.html`);
+  await sleep(1500);
+  const { sessionId: fS } = await send('Target.attachToTarget', { targetId: flushPage, flatten: true });
+  await evaluate(fS, `new Promise((r) => chrome.runtime.sendMessage({ kind: 'data.flush' }, r))`);
+  await send('Target.closeTarget', { targetId: flushPage });
   const tr = await swEval(`${idb}
     const kv = Object.fromEntries((await all('kv')).map((r) => [r.key, r.value]));
-    const rec = kv['model:recommend:v11'];
+    const rec = Object.entries(kv).find(([k]) => /^model:recommend:v[0-9]+$/.test(k))?.[1];
     const pairs = await all('cooccurrence');
     return {
       recTrained: rec?.trainedSamples ?? 0,
@@ -176,8 +196,17 @@ try {
       errors: (kv['errorLog:v1'] ?? []).map((e) => e.context + ': ' + e.message),
     };
   `);
+  if (process.env.E2E_DEBUG) {
+    console.log(await swEval(`${idb}
+      const ev = (await all('events')).filter((e) => e.domain === 'wiki.localhost' || e.domain === 'maps.localhost');
+      return JSON.stringify(ev.map((e) => [e.type, e.domain, e.tabId, e.ts % 100000, e.prevTabId ?? null, e.openedFrom ?? null]));
+    `));
+  }
   check('co-occurrence aggregated', tr.pairs > 0, `${tr.pairs} pairs`);
-  check('open head trained live on switch-opens', tr.recPositives > 0, `${tr.recPositives} groups / ${tr.recTrained} rows`);
+  // stackoverflow (cross-site navigate) + figma/news re-opens are within the
+  // 2-min recently-seen window and rightly skipped; wiki/maps/music are new
+  // sites opened in foreground tabs — the case that used to be skipped.
+  check('open head trained live on foreground new-tab opens', tr.recPositives >= 4, `${tr.recPositives} groups / ${tr.recTrained} rows`);
   check('transition + sequence models trained on tab switches', tr.transitionSteps > 0 && tr.seqKeys > 0, `steps=${tr.transitionSteps} bigram keys=${tr.seqKeys}`);
   check('no errors logged by the service worker', tr.errors.length === 0, tr.errors.join(' | '));
 

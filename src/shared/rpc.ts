@@ -123,6 +123,8 @@ export type RpcResponse =
         ensemble: string;
         byKind: Record<'typed' | 'link' | 'inTab', { n: number; hit1: number; hit3: number; baselineHit3: number }>;
         novel: number;
+        reachable: { n: number; hit1: number; hit3: number; baselineHit3: number };
+        vsBaseline: Record<'hit1' | 'hit3', { modelOnly: number; baselineOnly: number; p: number }>;
         tookMs: number;
       };
     }

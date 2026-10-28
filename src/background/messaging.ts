@@ -96,7 +96,7 @@ async function buildContext(): Promise<{
     ),
   );
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  const focusedDomain = extractDomain(active?.url) || undefined;
+  const activeDomain = extractDomain(active?.url);
   // Recent focus history from chrome.storage.session — populated by the
   // SW's startFocusSegment path. Used by sequence-memory predictors for
   // candidate generation and per-candidate scoring.
@@ -105,6 +105,13 @@ async function buildContext(): Promise<{
     ? (fhRaw['augur:focusHistory'] as string[])
     : [];
   const sess = fhRaw['augur:session'] as { startTs: number } | undefined;
+  // Asked from the new-tab page, the active tab is the dashboard itself; the
+  // context that predicts the next site is the last real site — the same
+  // focused domain training and the offline evaluator use.
+  const focusedDomain =
+    activeDomain && !activeDomain.startsWith('chrome')
+      ? activeDomain
+      : [...focusHistory].reverse().find((d) => !d.startsWith('chrome'));
   return {
     hour: now.getHours(),
     dow: now.getDay(),

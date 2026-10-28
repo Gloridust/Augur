@@ -31,7 +31,7 @@ const KV_CLEANUP_MODEL = 'model:cleanup:v5'; // v5: outcome labels (refocused vs
 // multiplicative bandit blend is gone — the bandit is a learned feature
 // now. Bumping resets the Adam/weight state so the new objective trains
 // clean; auto-warmup re-fits from the existing event log on update.
-const KV_RECOMMEND_MODEL = 'model:recommend:v11'; // v11: log-scaled inputs, recency prior, lr 0.001, pool negatives, point-in-time training
+const KV_RECOMMEND_MODEL = 'model:recommend:v12'; // v12: lr 0.0003, regularization centred on the recency prior
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
 const KV_RECOMMEND_FOREST = 'model:recommend:forest:v4'; // v4: log-scaled inputs, pool negatives, point-in-time features
 const KV_EVAL_HISTORY = 'evalHistory:v1';
@@ -66,12 +66,16 @@ export async function saveCleanupModel(model: OnlineLogReg): Promise<void> {
   await saveKV(KV_CLEANUP_MODEL, model.serialize());
 }
 
-// lr 0.001, not 0.01: Adam moves every weight ~lr per step whatever its
+// lr 0.0003, not 0.01: Adam moves every weight ~lr per step whatever its
 // gradient, so on a few hundred switches the 28 weakly-informative weights
-// random-walked to ±0.5 and drowned the prior (leak-free backtest on the July
-// 2026 data: MRR 0.11 at 0.01, 0.18 at 0.001, 0.18 for the untrained prior).
+// random-walked away from the prior (July 2026 data, leak-free backtest MRR:
+// 0.11 at 0.01; frozen at the split 0.18 at 0.001; learning online through
+// the test period as the SW does, 0.166 at 0.001 vs 0.180 at 0.0003). Slow
+// enough that a few hundred noisy groups can't undo the prior, fast enough
+// that thousands of consistent ones still move it. Regularization is centred
+// on the prior (setPriorWeights), not on zero.
 export function freshRecommendModel(featureCount: number, priorWeights?: number[]): OnlineLogReg {
-  const m = new OnlineLogReg(featureCount, { lr: 0.001, l2: 1e-4, l1: 1e-5 });
+  const m = new OnlineLogReg(featureCount, { lr: 0.0003, l2: 1e-4, l1: 1e-5 });
   m.setPriorRate(0.25);
   if (priorWeights) m.setPriorWeights(priorWeights);
   return m;

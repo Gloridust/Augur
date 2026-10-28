@@ -655,6 +655,25 @@ export function ModelDebugPanel() {
                     </Typography>
                   );
                 })}
+                {evalResult.reachable && evalResult.reachable.n > 0 && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                    {t('debug.reachable', {
+                      n: evalResult.reachable.n,
+                      hit1: (evalResult.reachable.hit1 * 100).toFixed(0),
+                      hit3: (evalResult.reachable.hit3 * 100).toFixed(0),
+                      base: (evalResult.reachable.baselineHit3 * 100).toFixed(0),
+                    })}
+                  </Typography>
+                )}
+                {evalResult.vsBaseline && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                    {t('debug.paired', {
+                      m: evalResult.vsBaseline.hit3.modelOnly,
+                      b: evalResult.vsBaseline.hit3.baselineOnly,
+                      p: evalResult.vsBaseline.hit3.p.toPrecision(2),
+                    })}
+                  </Typography>
+                )}
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                   {t('debug.novelTargets', {
                     n: evalResult.novel,

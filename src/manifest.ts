@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: '__MSG_extName__',
   description: '__MSG_extDescription__',
-  version: '0.5.1',
+  version: '0.5.2',
   default_locale: 'en',
   // Stable extension ID. Without `key`, Chrome derives the ID from the
   // install path, so reloading from a different directory creates a NEW

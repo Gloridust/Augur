@@ -386,7 +386,9 @@
       "link": "New tab from a link",
       "inTab": "Link in the same tab"
     },
-    "novelTargets": "{{n}} targets ({{pct}}%) were first-ever visits — no model can rank those, so 100% − {{pct}}% is the ceiling."
+    "novelTargets": "{{n}} targets ({{pct}}%) were first-ever visits — no model can rank those, so 100% − {{pct}}% is the ceiling.",
+    "reachable": "Sites visited before (n={{n}}): hit@1 {{hit1}}% · hit@3 {{hit3}}% (baseline {{base}}%)",
+    "paired": "Paired with the baseline at hit@3: model-only {{m}}, baseline-only {{b}}, p = {{p}}"
   },
   "palette": {
     "placeholder": "Search tabs, history, bookmarks, commands…",

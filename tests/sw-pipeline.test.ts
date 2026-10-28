@@ -87,6 +87,29 @@ describe('live training', () => {
     expect(model?.positiveSamples ?? 0).toBeGreaterThanOrEqual(1);
   });
 
+  it('a URL typed into a new foreground tab trains (the tab is already focused when it commits)', async () => {
+    const w = await freshWorld();
+    const { RECOMMEND_MODEL_VERSION } = await import('../src/ml/persistence');
+    // History: a site visited and closed, so the pool has a negative.
+    await w.openTab({ id: 1, windowId: 1, url: 'https://old.com/' });
+    await w.closeTab(1);
+    await w.openTab({ id: 2, windowId: 1, url: 'https://work.com/' });
+    await w.activate(2);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    // Cmd+T: the new-tab page opens in the foreground first…
+    const dash = 'chrome-extension://test-extension/src/dashboard/index.html';
+    await w.openTab({ id: 3, windowId: 1, url: dash, active: true });
+    await w.activate(3);
+    // …then the typed URL commits in that already-focused tab.
+    w.mock.tabs.get(3)!.url = 'https://typed.com/';
+    await w.c.tabs.onUpdated.fire(3, { url: 'https://typed.com/' }, { ...w.mock.tabs.get(3)! });
+    await w.persistAll();
+    vi.useRealTimers();
+    const model = (await w.db.kv.get(RECOMMEND_MODEL_VERSION))?.value as { positiveSamples: number } | undefined;
+    expect(model?.positiveSamples ?? 0).toBeGreaterThanOrEqual(1);
+  });
+
   it('every tab switch trains the factorized transition model', async () => {
     const w = await freshWorld();
     await w.openTab({ id: 1, windowId: 1, url: 'https://a.com/' });

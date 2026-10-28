@@ -76,6 +76,8 @@ export interface EvalReport {
   byKind: Record<PointKind, { n: number; hit1: number; hit3: number; baselineHit3: number }>;
   // Targets never visited before their point (unreachable for any ranker).
   novel: number;
+  // Hit rates on the reachable points only (target visited before).
+  reachable: { n: number; hit1: number; hit3: number; baselineHit3: number };
   // Paired comparison with the baseline on the same points: how many only
   // the model / only the baseline got right, and the exact McNemar p-value.
   vsBaseline: Record<'hit1' | 'hit3', { modelOnly: number; baselineOnly: number; p: number }>;
@@ -129,6 +131,9 @@ export async function evaluateRecommend(opts: {
   splitDays?: number;
   note?: string;
   persist?: boolean;
+  // Backtest only: keep learning online through the test period (default)
+  // or freeze the LR at the split.
+  prequential?: boolean;
 } = {}): Promise<EvalReport> {
   const t0 = Date.now();
   const mode = opts.mode ?? 'replay';
@@ -182,13 +187,14 @@ export async function evaluateRecommend(opts: {
   };
   let novel = 0;
   let evaluated = 0;
+  const reach = { n: 0, h1: 0, h3: 0, b3: 0 };
   const paired = { hit1: { m: 0, b: 0 }, hit3: { m: 0, b: 0 } };
 
   await walkEvents(events, pit, async (e, point) => {
     if (!point) return;
     const src = pit.source(e.ts);
-    if (trainSet.has(e)) {
-      await trainImplicitOpen(e, {
+    const learn = () =>
+      trainImplicitOpen(e, {
         focusHistory: point.focusHistory,
         focusedDomain: point.focusedDomain,
         openDomains: point.openDomains,
@@ -199,6 +205,8 @@ export async function evaluateRecommend(opts: {
         source: src,
         models,
       });
+    if (trainSet.has(e)) {
+      await learn();
       return;
     }
     if (!testSet.has(e)) return;
@@ -250,7 +258,19 @@ export async function evaluateRecommend(opts: {
       if (bHit && !mHit) paired[key].b += 1;
     }
     if (!((await src.stats(target))?.visitCount)) novel += 1;
+    else {
+      reach.n += 1;
+      if (idx === 0) reach.h1 += 1;
+      if (idx >= 0 && idx < 3) reach.h3 += 1;
+      if (bIdx >= 0 && bIdx < 3) reach.b3 += 1;
+    }
     evaluated += 1;
+    // Prequential (backtest): having scored this point, learn from it — the
+    // live SW updates its LR on every switch, so by the next test point the
+    // deployed model has seen this one. The forest stays as fit at the split
+    // (live, it refits every 8 h). Scoring always precedes learning, so no
+    // point is ever scored by a model that trained on it.
+    if (opts.prequential !== false && mode === 'backtest') await learn();
   });
 
   const n = Math.max(1, evaluated);
@@ -289,6 +309,12 @@ export async function evaluateRecommend(opts: {
       ]),
     ) as EvalReport['byKind'],
     novel,
+    reachable: {
+      n: reach.n,
+      hit1: reach.n ? reach.h1 / reach.n : 0,
+      hit3: reach.n ? reach.h3 / reach.n : 0,
+      baselineHit3: reach.n ? reach.b3 / reach.n : 0,
+    },
     vsBaseline: {
       hit1: { modelOnly: paired.hit1.m, baselineOnly: paired.hit1.b, p: mcnemarExact(paired.hit1.m, paired.hit1.b) },
       hit3: { modelOnly: paired.hit3.m, baselineOnly: paired.hit3.b, p: mcnemarExact(paired.hit3.m, paired.hit3.b) },

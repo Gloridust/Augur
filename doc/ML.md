@@ -99,7 +99,7 @@ v[i] ← β2 * v[i] + (1-β2) * g[i]²                      ← Adam second mome
 w[i] = softThreshold(ŵ[i], lr * l1)                    ← L1 proximal step
 ```
 
-Defaults: `lr=0.01`, `β1=0.9`, `β2=0.999`, `ε=1e-8`, `l2=1e-4`, `l1=1e-5`. **Head A uses `lr=0.001`**: Adam moves every weight by ~`lr` per step whatever its gradient, so on a few hundred training groups the ~28 weakly-informative weights random-walked to ±0.5 and drowned the real signal (point-in-time backtest MRR 0.11 at 0.01 vs 0.18 at 0.001).
+Defaults: `lr=0.01`, `β1=0.9`, `β2=0.999`, `ε=1e-8`, `l2=1e-4`, `l1=1e-5`. **Head A uses `lr=0.0003`, with L2/L1 centred on its prior weights** (`priorWeights`, MAP): Adam moves every weight by ~`lr` per step whatever its gradient, so on a few hundred training groups the ~28 weakly-informative weights random-walked away from the prior and drowned the real signal (prequential backtest MRR 0.11 at 0.01, 0.166 at 0.001, 0.180 at 0.0003).
 
 The L1 proximal soft-threshold drives small weights to **exactly zero**, giving implicit feature selection. Combined with L2, this is elastic net.
 
@@ -219,7 +219,7 @@ Beyond explicit user feedback, the SW emits **implicit labels** on tab events:
 
 The SW trains these live (`startFocusSegment`, the close handler); the replay trainer reconstructs them from the log. On the July 2026 trace: 311 outcomes, only 8 of them "closed" — a hoarder almost never closes background tabs, which is why the rule-based Declutter tiers stay primary.
 
-**Open — switch events** ([`trainImplicitOpen`](../src/ml/recommend.ts)). An open/navigate that lands on a new domain (an *arrival*; same-domain SPA routes are not), isn't the focused domain, wasn't seen in the last 2 min, and isn't already open in another tab — the exact rules the evaluator uses for test points. The live SW trains **before** writing the event, so the features can't see it (§21). One sampled-softmax group per switch: the opened domain against 8 negatives drawn from the serving candidate pool (§14).
+**Open — switch events** ([`trainImplicitOpen`](../src/ml/recommend.ts)). An open/navigate that lands on a new domain (an *arrival*; same-domain SPA routes are not), isn't the focused domain, wasn't seen in the last 2 min, and isn't already open in another tab — the exact rules the evaluator uses for test points. The live SW trains **before** writing the event, so the features can't see it (§21). The context's *focused domain* is the last real site before the event: until v0.5.2, a URL typed into the new-tab page (or a new foreground tab) had already made its own tab the focused one, so every such open looked like "the page you're on" and was skipped — live training missed exactly the typed new-tab moment. Serving had the mirror skew (focused = the dashboard). Both found by the real-Chrome e2e (`npm run e2e`). One sampled-softmax group per switch: the opened domain against 8 negatives drawn from the serving candidate pool (§14).
 
 ## 8. Calibration thresholds
 
@@ -369,6 +369,8 @@ This goes through the bandit, not the LR, because LR features describe the *cont
 
 - **Backtest** — fresh LR (+ MLP if enabled) and forest trained only on switches before the split (7 days before the newest event), bandit empty; scored on the switches after it. The honest generalization number.
 - **Replay** — today's trained scorer on the newest points. It has trained on them, so use it for before/after deltas only.
+- **Prequential backtest** — after scoring a test point the split-trained LR learns from it, as the live SW does, so the number is what the deployed model would have scored. (Freezing at the split made a fast learning rate look harmless; online it cost 0.015 MRR, which is why Head A runs at lr 0.0003 with regularization centred on its prior.)
+- **Reachable** — hit rates over targets that had been visited before. July 2026 trace: **hit@1 19.4%, hit@3 ≈ 41%** vs frecency 14.9% — the overall 10.8% / 23% is diluted by the 44% first-ever visits no ranker can get.
 - **Paired test** — on the same points, how many only the model got right vs only the baseline, with an exact McNemar p-value. Two overlapping Wilson intervals can't say whether the model beats frecency; this can. July 2026 trace, 3 seeds × splits of 7 and 10 days: hit@1 model-only 12–13 vs baseline-only 0, hit@3 20–22 vs 2–3, **p ≤ 0.0005** in every run.
 - **Breakdown** — per kind of open (`typed` in a new tab — the new-tab-page moment; `link` — new tab from a link; `inTab` — link followed in place) and the count of **novel** targets (never visited before the point: unreachable for any ranker, so `1 − novel/n` is the ceiling).
 

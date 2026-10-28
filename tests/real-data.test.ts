@@ -41,7 +41,7 @@ it.skipIf(!file)('real backup: warm-up + leak-free evaluation', async () => {
 
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   for (const mode of ['backtest', 'replay'] as const) {
-    const e = await evaluateRecommend({ mode, sample: 250, splitDays: Number(process.env.SPLIT_DAYS ?? 7), persist: false });
+    const e = await evaluateRecommend({ mode, sample: 250, splitDays: Number(process.env.SPLIT_DAYS ?? 7), persist: false, prequential: process.env.FROZEN ? false : true });
     console.log(
       `${mode} [${e.ensemble}] n=${e.evaluated} novel=${e.novel} in-pool=${pct(e.model.recallAtPool)}\n` +
         `  model    hit@1 ${pct(e.model.hit1)} (${e.ci.hit1.map(pct).join('–')})  hit@3 ${pct(e.model.hit3)}  hit@5 ${pct(e.model.hit5)}  MRR ${e.model.mrr.toFixed(3)}\n` +
@@ -49,6 +49,7 @@ it.skipIf(!file)('real backup: warm-up + leak-free evaluation', async () => {
         (['hit1', 'hit3'] as const)
           .map((k) => `  paired ${k}: model-only ${e.vsBaseline[k].modelOnly}, baseline-only ${e.vsBaseline[k].baselineOnly}, McNemar p=${e.vsBaseline[k].p.toPrecision(2)}`)
           .join('\n') + '\n' +
+        `  reachable n=${e.reachable.n}: hit@1 ${pct(e.reachable.hit1)}  hit@3 ${pct(e.reachable.hit3)} (baseline ${pct(e.reachable.baselineHit3)})\n` +
         Object.entries(e.byKind)
           .map(([k, v]) => `  ${k.padEnd(6)} n=${v.n} hit@1 ${pct(v.hit1)} hit@3 ${pct(v.hit3)} (baseline ${pct(v.baselineHit3)})`)
           .join('\n'),

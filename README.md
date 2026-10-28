@@ -319,6 +319,12 @@ Run the real dashboard + the real service-worker module in an ordinary page (chr
 npm run harness
 ```
 
+Check the built extension end to end in real Chrome — installs `dist/` into a throwaway headless profile, browses, and verifies capture → aggregation → live training → prediction through the real service worker · 在真实 Chrome 里端到端检查构建产物（临时无头配置，不碰你的浏览器）:
+
+```bash
+npm run e2e
+```
+
 Validate the models on a real backup (read locally, seeded, nothing is written back) · 用真实备份验证模型（本地读取、固定随机种子、不回写）:
 
 ```bash

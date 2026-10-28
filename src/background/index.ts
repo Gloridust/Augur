@@ -120,10 +120,16 @@ async function recentlyFocusedDomains(now: number): Promise<string[]> {
   return Array.from(new Set(rows.map((e) => e.domain).filter((d): d is string => !!d)));
 }
 
+function lastRealDomain(history: string[]): string | undefined {
+  for (let i = history.length - 1; i >= 0; i--) if (!history[i].startsWith('chrome')) return history[i];
+  return undefined;
+}
+
 async function buildOpenContext(
   now: number,
   ownTabId: number | undefined,
   sessionStartTs: number,
+  eventDomain: string,
 ): Promise<{
   focusHistory: string[];
   focusedDomain?: string;
@@ -131,11 +137,20 @@ async function buildOpenContext(
   recentlyFocusedDomains: string[];
   sessionStartTs: number;
 }> {
-  const focusHistory = [...(await getFocusHistory())];
-  const focusedTabId = await getFocusedTabId();
   const stateMap = await getStateMap();
+  const focusedTabId = await getFocusedTabId();
+  // The context is what the user was on BEFORE this event. When the event's
+  // own tab is the focused one — a new foreground tab, or a URL typed into
+  // the new-tab page — the state map already shows the event's domain
+  // there, which made every such open look like "the domain you're on" and
+  // the trainer skipped it: live training silently missed exactly the
+  // typed-in-a-new-tab moment (found by the real-Chrome e2e run). Fall back
+  // to the last real domain in the focus history, as the offline walk does.
+  const focusHistory = (await getFocusHistory()).filter((d) => d !== eventDomain);
   const focusedDomain =
-    focusedTabId !== undefined ? stateMap[focusedTabId]?.domain : undefined;
+    focusedTabId !== undefined && focusedTabId !== ownTabId
+      ? stateMap[focusedTabId]?.domain
+      : lastRealDomain(focusHistory);
   // Domains open in OTHER tabs (the event's own tab already shows the new
   // domain in the state map).
   const openDomains = Object.values(stateMap)
@@ -177,7 +192,7 @@ async function logEvent(
     // A training failure must never cost us the event, so it's isolated.
     if (openLike && arrival && event.domain) {
       try {
-        const ctx = await buildOpenContext(event.ts, event.tabId, sessionStartTs);
+        const ctx = await buildOpenContext(event.ts, event.tabId, sessionStartTs, event.domain);
         await trainImplicitOpen(event, ctx);
       } catch (err) {
         void logError('trainImplicitOpen', err);
@@ -414,6 +429,7 @@ const STALE_KEYS = [
   'model:recommend:forest:v2', // v3: newest-window training on cleaned data
   'model:recommend:mlp:v1', // v2: retrained alongside recommend v10
   'model:recommend:v10', // v11: log-scaled inputs, recency prior, lr 0.001, pool negatives
+  'model:recommend:v11', // v12: lr 0.0003, prior-centred regularization
   'model:recommend:forest:v3', // v4: pool negatives, point-in-time features
   'model:recommend:mlp:v2', // v3: log-scaled inputs
   'transition:v1', // v2: was never trained past random init

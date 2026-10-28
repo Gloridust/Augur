@@ -42,6 +42,9 @@ export interface LogRegState {
   adamMBias: number;
   adamVBias: number;
   adamT: number;
+  // Centre of the L2/L1 penalties (MAP with a Gaussian/Laplace prior around
+  // these weights). Absent = 0: ordinary shrink-to-zero regularization.
+  priorWeights?: number[];
 }
 
 const CALIB_WARMUP = 20;
@@ -168,7 +171,7 @@ export class OnlineLogReg {
     for (let i = 0; i < s.length; i++) {
       // Gradient: d/dw = err * x_std + l2 * w  (L1 is applied as a
       // proximal step after, not added to the gradient).
-      const g = err * s[i] + l2 * this.state.weights[i];
+      const g = err * s[i] + l2 * (this.state.weights[i] - this.priorAt(i));
       this.state.adamM[i] = ADAM_BETA1 * this.state.adamM[i] + (1 - ADAM_BETA1) * g;
       this.state.adamV[i] =
         ADAM_BETA2 * this.state.adamV[i] + (1 - ADAM_BETA2) * g * g;
@@ -177,7 +180,7 @@ export class OnlineLogReg {
       const step = (lr * mHat) / (Math.sqrt(vHat) + ADAM_EPS);
       const wTentative = this.state.weights[i] - step;
       // Proximal soft-threshold for L1 — drives small weights to exactly 0.
-      this.state.weights[i] = softThreshold(wTentative, lr * l1);
+      this.state.weights[i] = this.priorAt(i) + softThreshold(wTentative - this.priorAt(i), lr * l1);
     }
 
     // Bias gets the same Adam treatment but no L1 (we want a free intercept).
@@ -273,7 +276,7 @@ export class OnlineLogReg {
       const s = S[i];
       for (let j = 0; j < dim; j++) grad[j] += dZ * s[j];
     }
-    for (let j = 0; j < dim; j++) grad[j] += l2 * this.state.weights[j];
+    for (let j = 0; j < dim; j++) grad[j] += l2 * (this.state.weights[j] - this.priorAt(j));
 
     // One Adam step on the accumulated group gradient.
     this.state.adamT += 1;
@@ -287,7 +290,8 @@ export class OnlineLogReg {
       const mHat = this.state.adamM[j] / bc1;
       const vHat = this.state.adamV[j] / bc2;
       const step = (lr * mHat) / (Math.sqrt(vHat) + ADAM_EPS);
-      this.state.weights[j] = softThreshold(this.state.weights[j] - step, lr * l1);
+      const c = this.priorAt(j);
+      this.state.weights[j] = c + softThreshold(this.state.weights[j] - step - c, lr * l1);
     }
     this.state.adamMBias = ADAM_BETA1 * this.state.adamMBias + (1 - ADAM_BETA1) * gradBias;
     this.state.adamVBias = ADAM_BETA2 * this.state.adamVBias + (1 - ADAM_BETA2) * gradBias * gradBias;
@@ -318,6 +322,11 @@ export class OnlineLogReg {
   setPriorWeights(w: number[]): void {
     if (this.state.trainedSamples > 0 || w.length !== this.state.weights.length) return;
     this.state.weights = [...w];
+    this.state.priorWeights = [...w];
+  }
+
+  private priorAt(i: number): number {
+    return this.state.priorWeights?.[i] ?? 0;
   }
 
   // Initial (cold-start) bias toward the empirical positive rate.
