@@ -34,13 +34,18 @@ Chrome MV3 service workers are **event-driven** — they sleep after ~30 seconds
 
 **All listener registrations must be at module top-level.** If you register inside an `async function` or after an `await`, the listener won't survive a sleep cycle. See [`background/index.ts`](../src/background/index.ts) — every `chrome.*.addListener(...)` call is at the file's top scope.
 
+**Tracking listeners run one at a time.** Chrome fires listeners concurrently, and async handlers interleave at every `await` — before v0.5.0 two `onUpdated` calls for one navigation both read "previous URL = old" and both logged it (22% duplicate navigates on a real trace), and focus segments raced each other. Every tracking listener now goes through [`enqueue`](../src/background/queue.ts), a promise chain that runs handlers serially and logs (never propagates) a failure. Within one event, [`logEvent`](../src/background/index.ts) trains the open head **before** writing the event, so training features can't see the event they learn from, then writes it and updates aggregates.
+
+**State lives in memory, persisted in batches.** Tab runtime state ([`state.ts`](../src/background/state.ts)) is an in-memory map written to `chrome.storage.session` 1 s after the last change; model state is written to `kv` 5 s after the last change ([`flush.ts`](../src/ml/flush.ts)). The heartbeat flushes both, so a killed SW loses at most a few seconds.
+
 Three persistent timers are scheduled in `chrome.runtime.onInstalled`:
 
 | Alarm | Period | Purpose |
 |---|---|---|
-| `heartbeat` | 5 min | Keep-alive + reconcile open tabs |
-| `nightlyDecay` | 6 h | Apply exponential decay to domain stats; prune cold entries |
-| `embeddingRetrain` | 12 h | Rebuild SkipGramEmbedding from co-occurrence pairs |
+| `heartbeat` | 5 min | Stale badge + flush pending state and model writes |
+| `nightlyDecay` | 6 h | Normalize decayed frecency; prune cold domains and pairs; prune prefix/text tables |
+| `embeddingRetrain` | 12 h | One SkipGramEmbedding batch from co-occurrence pairs |
+| `forestRetrain` | 8 h | Refit the recommend forest on point-in-time features |
 
 ## 3. Newtab interception
 
@@ -108,6 +113,10 @@ Some surfaces in the dashboard need to share state across multiple newtab pages 
 
 Example: [`useGeminiChat.ts`](../src/dashboard/hooks/useGeminiChat.ts) — Augur AI chat history is shared. Two open dashboard tabs see the same conversation, and the streaming text appears in both as the writing tab flushes chunks every 250 ms.
 
+### Background dashboards do no work
+
+The dashboard is the new-tab page, so a heavy tab user keeps many copies of it in background tabs. [`liveRefresh.ts`](../src/dashboard/liveRefresh.ts) is the one way a surface subscribes to tab activity or polls: events are debounced, `onUpdated` only counts when a shown property changed (url, title, favicon, pinned, discarded, group), and a hidden page records that it is stale and refreshes once when it becomes visible. Suggestions and OracleHint share one `recommend.open` round-trip; OracleHint waits until the page is visible before showing (and logging an impression).
+
 ## 7. Build pipeline
 
 [Vite](https://vitejs.dev/) + [`@crxjs/vite-plugin`](https://crxjs.dev/) for MV3 packaging.
@@ -132,21 +141,28 @@ src/
 ├── shared/
 │   ├── db.ts                         # Dexie schema + extractDomain()
 │   ├── types.ts                      # cross-boundary types
-│   └── rpc.ts                        # typed RPC envelope + callRpc()
+│   ├── rpc.ts                        # typed RPC envelope + callRpc()
+│   └── backup.ts · zip.ts            # backup / restore / debug bundle (page-side)
 ├── background/
 │   ├── index.ts                      # SW entry, all chrome.* listeners
+│   ├── queue.ts                      # serial event queue
 │   ├── messaging.ts                  # RPC dispatch switch
-│   └── state.ts                      # chrome.storage.session helpers
+│   └── state.ts                      # in-memory tab state → chrome.storage.session
 ├── ml/
-│   ├── aggregate.ts                  # incremental + batch aggregation
-│   ├── features.ts                   # feature extraction + names arrays
+│   ├── aggregate.ts                  # incremental + batch aggregation, exact decay
+│   ├── sources.ts                    # live AggregateSource
+│   ├── pit.ts · walk.ts              # point-in-time replay + switch-point walker
+│   ├── candidate-features.ts         # the one Head A feature builder
+│   ├── features.ts                   # feature extraction + names arrays + transforms
 │   ├── timeseries.ts                 # visit velocity + session context
 │   ├── cleanup.ts                    # Head B (cleanup recommender)
-│   ├── recommend.ts                  # Head A (open recommender)
+│   ├── recommend.ts                  # Head A (open recommender) + candidate pool
+│   ├── rf-train.ts · eval.ts         # forest, replay warm-up, backtest/replay eval
+│   ├── flush.ts · lazy.ts            # batched writes, cached loads
 │   ├── pins.ts                       # pin reranker (Head A consumer)
 │   ├── insights.ts                   # heatmap + today recap
 │   ├── persistence.ts                # KV load/save (model + bandit + embedding)
-│   ├── data-ops.ts                   # export / wipe / reset / inspect
+│   ├── data-ops.ts                   # flush / invalidate hooks · wipe · reset · inspect
 │   ├── stash.ts · workspaces.ts      # session-style helpers
 │   ├── math.ts                       # sigmoid · sampleBeta · Welford · softmax
 │   ├── embedding-train.ts            # nightly skip-gram batch
@@ -157,7 +173,8 @@ src/
 │       └── embedding.ts              # SkipGramEmbedding
 └── dashboard/
     ├── main.tsx · theme.ts · styles.css · App.tsx
-    ├── api/recommendations.ts        # SW RPC client wrappers
+    ├── api/recommendations.ts        # SW RPC client wrappers + page-side backup I/O
+    ├── liveRefresh.ts                # visibility-gated, debounced refresh
     ├── components/
     │   ├── AppHeader · NavSearchBar · AiAssistant · MagicBall · AugurMark
     │   ├── Greeting · TodayRecap · PinsRow · Suggestions · OracleHint

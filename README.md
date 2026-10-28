@@ -81,7 +81,7 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 - Italiana display wordmark · Iowan / Charter / Source Serif body — paper aesthetic throughout. · Italiana 衬线 wordmark + 系统衬线正文，整套纸面美学。
 - 3D mechanical "expansion ball" greeting mark that follows your cursor. · 问候语左侧是会跟随光标转动的 3D 机械伸缩球。
 - Onboarding modal with privacy promise + learning-progress widget. · 首次引导：隐私承诺 + 实时学习进度。
-- Settings dialog: name, language, data export / **import** / wipe, **model debug panel** with live LR coefficients + bandit α/β + nearest-neighbor preview + backtest. Import accepts a `.json` backup (full replace) or a debug-bundle `.zip` (merge lost history back in, deduped, then auto-retrains every model). · 设置面板：姓名、语言、数据导出 / **导入** / 清除、**模型调试面板**（实时 LR 系数 + bandit α/β + 最近邻预览 + 回测）。导入支持 `.json` 备份（整体替换）或调试包 `.zip`（合并找回历史、去重、自动重训所有模型）。
+- Settings dialog: name, language, data export / **import** / wipe, **model debug panel** with live LR coefficients + bandit α/β + nearest-neighbor preview + backtest. Backups are gzip-compressed and read/written by the page itself, so any history size works. Import accepts a `.json.gz` / `.json` backup (full replace) or a debug-bundle `.zip` (merge lost history back in, deduped, then auto-retrains every model). The backtest is leak-free (point-in-time features) and reports 95% intervals plus a typed / link / in-tab breakdown. · 设置面板：姓名、语言、数据导出 / **导入** / 清除、**模型调试面板**（实时 LR 系数 + bandit α/β + 最近邻预览 + 回测）。备份为 gzip 压缩、由页面直接读写，历史再大也能导出导入。导入支持 `.json.gz` / `.json` 备份（整体替换）或调试包 `.zip`（合并找回历史、去重、自动重训所有模型）。回测无数据泄漏（按时间点重建特征），给出 95% 置信区间和「输入 / 链接 / 页内跳转」分类统计。
 - **Durable by design**: a stable manifest `key` pins the extension ID (and its IndexedDB) across reloads/paths, and `unlimitedStorage` exempts it from Chrome's eviction — your months of learned history don't silently vanish. · **数据不丢**：固定的 manifest `key` 钉死扩展 ID 与数据库（跨重载/路径不变），`unlimitedStorage` 豁免 Chrome 驱逐——积累几个月的学习历史不会悄悄清零。
 - Toast feedback for every destructive action. · 每个破坏性操作都有 toast 反馈。
 
@@ -249,20 +249,26 @@ src/
 ├── manifest.ts                       # MV3 manifest (consumed by @crxjs)
 ├── shared/
 │   ├── db.ts · types.ts · rpc.ts     # cross-boundary contracts
+│   ├── backup.ts · zip.ts            # backup / restore / debug bundle (runs in the page)
 ├── background/
 │   ├── index.ts                      # SW entry · listeners · alarms
+│   ├── queue.ts                      # serial event queue (no interleaved listeners)
 │   ├── messaging.ts                  # RPC dispatch table
-│   └── state.ts                      # chrome.storage.session helpers
+│   └── state.ts                      # in-memory tab state, persisted to chrome.storage.session
 ├── ml/
-│   ├── aggregate.ts                  # incremental + batch aggregation
-│   ├── features.ts                   # feature extraction
+│   ├── aggregate.ts                  # incremental + batch aggregation, exact decay
+│   ├── sources.ts · pit.ts · walk.ts # live / point-in-time aggregate sources, event walker
+│   ├── candidate-features.ts         # THE feature builder (serve · train · eval)
+│   ├── features.ts                   # feature extraction + model-input transforms
 │   ├── timeseries.ts                 # visit-velocity & session-context
 │   ├── cleanup.ts                    # Head B
-│   ├── recommend.ts                  # Head A
+│   ├── recommend.ts                  # Head A · candidate pool
+│   ├── rf-train.ts · eval.ts         # forest · replay warm-up · backtest
+│   ├── flush.ts · lazy.ts            # batched model writes · cached loads
 │   ├── pins.ts                       # Pin reranker (Head A consumer)
 │   ├── insights.ts                   # heatmap · today recap
 │   ├── persistence.ts                # model + bandit state via kv
-│   ├── data-ops.ts                   # export · wipe · reset · inspect
+│   ├── data-ops.ts                   # flush/invalidate hooks · wipe · reset · inspect
 │   ├── stash.ts · workspaces.ts      # session-style storage helpers
 │   ├── math.ts                       # sigmoid · sampleBeta · Welford · softmax
 │   ├── embedding-train.ts            # nightly skip-gram batch
@@ -273,7 +279,8 @@ src/
 └── dashboard/
     ├── main.tsx · theme.ts · styles.css
     ├── App.tsx
-    ├── api/recommendations.ts        # SW RPC client
+    ├── api/recommendations.ts        # SW RPC client + page-side backup I/O
+    ├── liveRefresh.ts                # visibility-gated, debounced refresh plumbing
     ├── components/
     │   ├── AppHeader · NavSearchBar · AiAssistant · MagicBall · AugurMark
     │   ├── Greeting · TodayRecap · PinsRow · Suggestions · OracleHint
@@ -303,6 +310,13 @@ npm run typecheck    # tsc -b --noEmit
 npm run icons        # regenerate PNG icons from public/icons/icon.svg
 npm run build        # production bundle in dist/
 npm run package      # build + zip dist into augur-<version>.zip
+npm test             # vitest: SW pipeline, data layer, point-in-time parity, backup
+```
+
+Validate the models on a real backup (read locally, seeded, nothing is written back) · 用真实备份验证模型（本地读取、固定随机种子、不回写）:
+
+```bash
+AUGUR_BACKUP=~/Downloads/augur-backup-2026-10-29.json.gz npx vitest run tests/real-data.test.ts
 ```
 
 `npm run dev` rebuilds on save. Service-worker changes need a manual reload via the extension card. · `npm run dev` 保存即编译。SW 改动需要在扩展卡片上点刷新。

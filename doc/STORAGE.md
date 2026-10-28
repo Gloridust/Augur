@@ -18,11 +18,11 @@ Everything Augur stores, where it stores it, and what survives an extension upda
 
 Database name: `augur` (legacy: `chromehomepage`). Defined in [`src/shared/db.ts`](../src/shared/db.ts).
 
-### Tables (current version: v4)
+### Tables (current version: v5)
 
 | Table | PK | Indexes | Holds |
 |---|---|---|---|
-| `events` | `++id` | `ts, type, tabId, domain, url, [domain+ts], [type+ts]` | Every observable tab event (open / close / focus / blur / navigate / idle transitions) |
+| `events` | `++id` | `ts, [domain+ts], [type+ts]` | Every observable tab event (open / close / focus / blur / navigate / idle transitions) |
 | `feedback` | `++id` | `ts, surface, domain, action` | Explicit user feedback on cleanup / open suggestions |
 | `domains` | `domain` | `lastVisit, visitsDecay, updatedAt` | Aggregate stats per domain (visit count, decay-weighted frecency, hour/dow histograms, focus stats) |
 | `cooccurrence` | `pair` | `a, b, count, lastSeen` | Pair counts: how often domain A and B were focused within 5 minutes of each other |
@@ -39,8 +39,9 @@ Database name: `augur` (legacy: `chromehomepage`). Defined in [`src/shared/db.ts
 | v2 | `stash` |
 | v3 | `workspaces` |
 | v4 | `pins` |
+| v5 | drops the unused `events` indexes (`type`, `tabId`, `domain`, `url` — every query goes through `ts`, `[domain+ts]` or `[type+ts]`; each extra index was written on every event) and **removes duplicate rows** left by the pre-queue service worker (a navigate with the same URL within 1 s, a focus/blur of the same tab within 1 s — 22% of navigates on a real trace), then sets `maintenance:rebuildAggregates` so the SW rebuilds `domains` / `cooccurrence` from the cleaned log on its next start |
 
-**No `.upgrade()` callbacks anywhere.** All migrations are purely additive — adding a new table doesn't require migrating existing rows. If a future change needs a destructive migration (e.g. renaming a column), the policy is:
+v5 is the only `.upgrade()` callback. Migrations v1–v4 were purely additive. For a destructive migration, the policy is:
 
 1. Bump the version
 2. Define the new schema
@@ -66,14 +67,14 @@ The `kv` table is a free-form key-value store. Keys in use:
 
 | Key | Value | Set by |
 |---|---|---|
-| `model:cleanup:v3` | Serialized `LogRegState` (weights, bias, Welford stats, Adam moments, Platt calibration) | [`saveCleanupModel`](../src/ml/persistence.ts) |
-| `model:recommend:v9` | Same shape, recommendation head (30 features — bumped v8→v9 when `dinAttention` was added) | [`saveRecommendModel`](../src/ml/persistence.ts) |
-| `model:recommend:forest:v2` | Serialized RandomForest for the recommend head | [`saveRecommendModel`](../src/ml/persistence.ts) |
-| `model:recommend:mlp:v1` | Serialized optional TinyMLP (wide-&-deep head; off by default) | [`saveRecommendModel`](../src/ml/persistence.ts) |
+| `model:cleanup:v5` | Serialized `LogRegState` (weights, bias, Welford stats, Adam moments, Platt calibration) — v5: trained on outcome labels | [`saveCleanupModel`](../src/ml/persistence.ts) |
+| `model:recommend:v11` | Same shape, recommendation head (30 features) — v11: log-scaled inputs, recency prior, lr 0.001, pool negatives, point-in-time training | [`saveRecommendModel`](../src/ml/persistence.ts) |
+| `model:recommend:forest:v4` | Serialized RandomForest for the recommend head | [`saveRecommendForest`](../src/ml/persistence.ts) |
+| `model:recommend:mlp:v3` | Serialized optional TinyMLP (wide-&-deep head; off by default) | [`persistence.ts`](../src/ml/persistence.ts) |
 | `bandit:cleanup:v1` | `BanditState` — Map of `armId` → `{ α, β, impressions }` | [`saveBandit('cleanup')`](../src/ml/persistence.ts) |
 | `bandit:recommend:v1` | Same shape, recommendation bandit | [`saveBandit('recommend')`](../src/ml/persistence.ts) |
 | `embedding:v1` | `EmbeddingState` — vocab + 32-dim vectors + training step count + updatedAt | [`saveEmbedding`](../src/ml/persistence.ts) |
-| `transition:v1` | Factorized next-domain transition model (`u`/`v` vectors) | [`persistence.ts`](../src/ml/persistence.ts) |
+| `transition:v2` | Factorized next-domain transition model (`u`/`v` vectors) — v2: trained on every tab switch (v1 never left random init) | [`persistence.ts`](../src/ml/persistence.ts) |
 | `domainText:v1` | Per-domain running mean text-embedding vector | [`persistence.ts`](../src/ml/persistence.ts) |
 | `circadian:v1` | Decayed 24-bin personal activity histogram (`hourActivityZ`) | [`persistence.ts`](../src/ml/persistence.ts) |
 | `urlPrefixes:v1` | Per-domain decayed 2-segment URL-prefix counts (top 5) | [`persistence.ts`](../src/ml/persistence.ts) |
@@ -85,6 +86,9 @@ The `kv` table is a free-form key-value store. Keys in use:
 | `lastAggregateAt` | Number — ms timestamp of the last `decayAndPrune` run | [`setLastAggregateAt`](../src/ml/persistence.ts) |
 | `lastEmbedTrainAt` | Number — ms timestamp | [`saveEmbedding`](../src/ml/persistence.ts) (side effect) |
 | `historyBootstrappedAt` | Number — ms timestamp the one-time history bootstrap completed | [`bootstrapFromHistory`](../src/ml/history-bootstrap.ts) |
+| `maintenance:rebuildAggregates` | `{reason, removed}` — set by the v5 migration or an import; the SW rebuilds aggregates and retrains the embedding on its next start, then deletes it | [`db.ts`](../src/shared/db.ts), [`backup.ts`](../src/shared/backup.ts) |
+
+Model state is held in memory by the SW and written back in batches: [`markDirty`](../src/ml/flush.ts) schedules a write 5 s after the last change, and `flushAll()` runs on the 5-min heartbeat, before an export, and after training passes. Import, reset and wipe call `discardDirty()` first so a stale in-memory copy can never be written back over them.
 
 ### Version bump policy
 
@@ -174,14 +178,18 @@ A softer "Reset models only" option clears just the model + bandit + embedding K
 
 ## 8. Export & import
 
-Settings → Data → "Export JSON" calls [`exportAllData`](../src/ml/data-ops.ts) which serializes every Dexie table into one JSON blob and triggers a browser download.
+All file I/O runs **in the dashboard page**, which shares the extension's IndexedDB origin ([`shared/backup.ts`](../src/shared/backup.ts), [`shared/zip.ts`](../src/shared/zip.ts)). It used to go through the service worker, but `chrome.runtime` messages are capped at 64 MiB of JSON, and a year of events is past that — export and import failed for exactly the users whose history is worth keeping. The SW's only part is two RPCs: `data.flush` (write pending model state to `kv` before the page reads) and `data.invalidate` (drop pending writes and in-memory caches before and after the page writes).
 
-Settings → Data → "Import" now accepts two inputs via [`importAll(raw, { merge })`](../src/ml/data-ops.ts):
+Settings → Data → **Export** writes `augur-backup-YYYY-MM-DD.json.gz` — gzip of the full `DataDump` (every table, schema v4).
 
-- a **`.json`** backup → **full replace** (the whole database is overwritten)
-- a debug-bundle **`.zip`** (read by [`zipReader.ts`](../src/dashboard/zipReader.ts)) → **merge**: unions `events` / `feedback` with exact dedupe (idempotent re-import), skips derived tables, keeps local `kv` and only adopts *absent* keys
+Settings → Data → **Import** accepts:
 
-Either path then runs an automatic warm-up chain: rebuild aggregates → train embeddings → rebuild sequence memory → replay implicit training → retrain forest. Merge mode makes recovery from a shared debug bundle safe and repeatable.
+- a backup **`.json.gz`** or legacy **`.json`** → **full replace** (the whole database is overwritten)
+- a debug-bundle **`.zip`** → **merge**: unions `events` / `feedback` with exact dedupe (idempotent re-import), skips derived tables, keeps local `kv` and only adopts *absent* keys. The reader walks the zip's central directory and handles STORE and DEFLATE, so a bundle that was unzipped and re-zipped (Finder, Explorer) still imports.
+
+Either path removes pre-queue duplicate rows, then runs the warm-up chain: rebuild aggregates → train embeddings → rebuild sequence memory → replay implicit training → retrain forest.
+
+Settings → Advanced → **Export debug bundle** writes a zip of one JSON file per table plus `MANIFEST.json`, `SCHEMA.md` and `errors.json`, each entry DEFLATE-compressed (~10× smaller than the old uncompressed bundle).
 
 ## See also
 

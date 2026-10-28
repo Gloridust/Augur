@@ -84,7 +84,8 @@ If you're adding a feature to Head A or Head B:
 1. **[`src/shared/types.ts`](../src/shared/types.ts)** — add the field to `CleanupFeatures` or `RecommendFeatures`.
 2. **[`src/ml/features.ts`](../src/ml/features.ts)** — append the field name to `CLEANUP_FEATURE_NAMES` or `RECOMMEND_FEATURE_NAMES`. **Append-only** — reordering breaks index-keyed weights. Then update the corresponding `buildXFeatures()` to compute the new value.
 3. **[`src/ml/persistence.ts`](../src/ml/persistence.ts)** — bump the model KV key (`model:cleanup:vN` → `vN+1`) so old weights don't get mis-mapped. Add the old key to the `STALE_KEYS` array in [`background/index.ts`](../src/background/index.ts) `onInstalled` handler so it gets cleaned up on update.
-4. If the new feature needs context that the existing `buildXFeatures()` arguments don't carry, extend the args object — keep the new args optional with safe defaults so existing callers (especially `trainImplicitCleanup` paths) don't break.
+4. If the new feature needs context that the existing `buildXFeatures()` arguments don't carry, extend the args object — keep the new args optional with safe defaults so existing callers (especially the outcome-label path, `outcomeFeatures`) don't break.
+5. Head A features are built in exactly one place, [`candidate-features.ts`](../src/ml/candidate-features.ts), from an `AggregateSource` — never read live tables directly from a feature, or replay, the forest and the backtest will see the future. If the feature needs new per-domain state, add it to both `liveSource` ([`sources.ts`](../src/ml/sources.ts)) and `PointInTimeAggregates` ([`pit.ts`](../src/ml/pit.ts)) and extend `tests/pit-parity.test.ts`. A heavy-tailed raw value gets a transform in `RECOMMEND_TRANSFORMS`.
 
 Full reasoning in [ML.md](./ML.md#feature-names-are-append-only).
 

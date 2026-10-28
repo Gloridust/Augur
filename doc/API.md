@@ -262,14 +262,25 @@ Request:  { kind: 'data.summary' }
 Response: { ok: true; kind: 'data.summary'; data: DataSummary }
 ```
 
-### `data.export`
+### `data.flush`
+
+Writes every pending in-memory model change to `kv`, so a page that reads the tables next sees current state. Returns the feature-name arrays for the debug-bundle manifest.
 
 ```ts
-Request:  { kind: 'data.export' }
-Response: { ok: true; kind: 'data.export'; data: DataDump }
+Request:  { kind: 'data.flush' }
+Response: { ok: true; kind: 'data.flush'; data: { featureNames: { cleanup: string[]; recommend: string[] } } }
 ```
 
-The dashboard wraps the response in a Blob and triggers a download.
+### `data.invalidate`
+
+Discards pending model writes and every in-memory model cache, so nothing stale is written back over tables the page just replaced and the next use reloads from the database. The page calls it before and after an import.
+
+```ts
+Request:  { kind: 'data.invalidate' }
+Response: { ok: true; kind: 'ack' }
+```
+
+Backup, restore and the debug bundle no longer go through RPC: the former `data.export`, `data.import` and `data.exportDebugBundle` carried the whole database in one message and failed past Chrome's 64 MiB message cap. The page reads and writes IndexedDB directly ([`shared/backup.ts`](../src/shared/backup.ts)) between these two calls.
 
 ### `data.wipe`
 

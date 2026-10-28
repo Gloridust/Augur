@@ -10,8 +10,8 @@ Augur runs **two recommendation heads**, both built on the same `OnlineLogReg` c
 
 | Head | Predicts | Features | Source |
 |---|---|---|---|
-| **A** | "Is the user likely to want to OPEN this domain right now?" | **30** (`recommend:v9`) | [`recommend.ts`](../src/ml/recommend.ts) |
-| **B** | "Is this open tab a candidate for cleanup?" | 26 (`cleanup:v4`) | [`cleanup.ts`](../src/ml/cleanup.ts) |
+| **A** | "Is the user likely to want to OPEN this domain right now?" | **30** (`recommend:v11`) | [`recommend.ts`](../src/ml/recommend.ts) |
+| **B** | "Is this open tab a candidate for cleanup?" | 26 (`cleanup:v5`) | [`cleanup.ts`](../src/ml/cleanup.ts) |
 
 Both heads:
 - Standardize features via per-feature Welford running stats
@@ -21,7 +21,7 @@ Both heads:
 
 Head A is no longer a bare LogReg — it's the linear member of an **ensemble** (see §3.1): `LogReg + RandomForest + optional TinyMLP`. Head A also drives the Pin row's smart sort (via [`pins.ts`](../src/ml/pins.ts)) and OracleHint (the dynamic-island top-3 capsule). One model → many surfaces; signals from any surface train the same weights.
 
-> **Reality check (from a real usage trace).** The open head backtests strongly (hit@3 ≈ 85–92%, recall@pool ≈ 95–98%), but ~97% of a heavy user's tab-opens happen through the address bar / link-clicks that an extension can't intercept, so the open surfaces see little adoption. The feature with real traction is **cleanup** (§7) — which is why the recent work went there (bulk Declutter sweep + stale-tab badge). Model accuracy was never the open head's bottleneck; the surface is.
+> **Reality check (from a real usage trace).** The hit@3 ≈ 85–92% this section used to quote came from an evaluator that leaked the future (§21). Measured point-in-time on the same July 2026 trace, the open head scores **hit@1 ≈ 10%, hit@3 ≈ 23%, MRR 0.18** on held-out switches, against a frecency baseline of 0% / 8% / 0.07 — with a ceiling of 56%, because 44% of the targets were domains the user had never visited before. ~97% of a heavy user's tab-opens also happen through the address bar / link-clicks an extension can't intercept, so the open surfaces see little adoption. The feature with real traction is **cleanup** (§6) — which is why the recent work went there (bulk Declutter sweep + stale-tab badge).
 
 ## 2. Feature pipeline
 
@@ -44,6 +44,10 @@ The order in [`RECOMMEND_FEATURE_NAMES`](../src/ml/features.ts) is the source of
 | Directed / session / decision (v8) | `transitionAffinity` (asymmetric A→B from in/out skip-gram tables), `sessionSim` (cosine to the multi-tab session centroid), `sessionCohesion` (session cluster tightness), `minutesIntoSession`, `isSessionStart`, `hourActivityZ` (z-score of the hour vs the user's OWN rhythm), `banditLogit` (acceptance posterior as a logit), `prefixConcentration` (share of traffic in the domain's top URL prefix) |
 | Semantic + factorized (v8) | `titleSimToFocused`, `titleSimToSession` (hashed title/URL text vectors — shared vocabulary even for never-co-visited domains), `factorizedTransition` (u(context)·v(target) — fires for (from→to) pairs the count tables never saw) |
 | **Target attention (v9)** | **`dinAttention`** — DIN-style candidate-as-query attention over the recent focus history (§3.2) |
+
+### Model inputs are log-scaled where the signal is a ratio
+
+`RecommendFeatures` keeps raw, readable values (reasons, debug UI). [`vectorFromRecommend`](../src/ml/features.ts) — the only path into any model — applies `log1p` to `recencyHours`, `freqDecay`, `avgFocusMs` (in seconds), `cooccurrenceWithFocused` and `minutesIntoSession`. Raw `recencyHours` ran 0 → 720 with a std of hundreds, so after the LR's linear standardization "1 h vs 10 h since the last visit" — the strongest single signal in the data — was a rounding error.
 
 ### Head B — cleanup recommender (26 features)
 
@@ -95,7 +99,7 @@ v[i] ← β2 * v[i] + (1-β2) * g[i]²                      ← Adam second mome
 w[i] = softThreshold(ŵ[i], lr * l1)                    ← L1 proximal step
 ```
 
-Defaults: `lr=0.01`, `β1=0.9`, `β2=0.999`, `ε=1e-8`, `l2=1e-4`, `l1=1e-5`.
+Defaults: `lr=0.01`, `β1=0.9`, `β2=0.999`, `ε=1e-8`, `l2=1e-4`, `l1=1e-5`. **Head A uses `lr=0.001`**: Adam moves every weight by ~`lr` per step whatever its gradient, so on a few hundred training groups the ~28 weakly-informative weights random-walked to ±0.5 and drowned the real signal (point-in-time backtest MRR 0.11 at 0.01 vs 0.18 at 0.001).
 
 The L1 proximal soft-threshold drives small weights to **exactly zero**, giving implicit feature selection. Combined with L2, this is elastic net.
 
@@ -117,6 +121,8 @@ This keeps `predict(x)` returning a real probability, not just a sigmoid score. 
 ### Cold-start bias
 
 `setPriorRate(rate)` sets the bias to `log(rate / (1-rate))` so the cold model predicts roughly the empirical positive rate (Head A: 0.25; Head B: 0.15) instead of always 0.5.
+
+Head A also starts from an informative **weight prior** (`RECOMMEND_WEIGHT_PRIOR`: `recencyHours −1.0`, `freqDecay +0.4` in standardized space — "recent, then frequent"). With little data the learned ranker therefore behaves like that rule instead of like noise, and the data refines it. On the July 2026 trace the untrained prior alone already scores hit@3 22.5% point-in-time; a from-zero LR trained on the same ~100 switches scored 10%.
 
 ## 4. BetaBandit (Thompson sampling)
 
@@ -159,7 +165,7 @@ This is where the auto-select / coral-glow UX in [`TabWall.tsx`](../src/dashboar
 1. Dashboard mount (or visibility change) → `runSmartCleanup(false)` fires silently.
 2. SW returns all candidates with calibrated probability ≥ 0.55 (the `SCORE_THRESHOLD` in `cleanup.ts`).
 3. Dashboard filters again to ≥ 0.60 (`AUTO_SELECT_THRESHOLD` in `TabWall.tsx`) — uncertainty rejection. Predictions in [0.55, 0.60) still surface in the InlineCleanupCard but don't get auto-checked.
-4. Auto-checked tabs get a coral box-shadow glow with a 2.4s breathing animation.
+4. Auto-checked tabs get a static coral box-shadow glow (it used to breathe on an infinite animation, which repainted every flagged row every frame).
 5. User can uncheck false positives. The glow stays on — it marks "AI proposed", not "currently selected".
 6. User clicks Close (or Clear).
 7. `flushSmartCleanupFeedback()` walks the `aiSelected` map:
@@ -207,14 +213,13 @@ Heavy hoarders live inside their tabs, not on the dashboard, so the one always-v
 
 Beyond explicit user feedback, the SW emits **implicit labels** on tab events:
 
-[`trainImplicitCleanup`](../src/ml/cleanup.ts):
-- User closed a tab without focusing it (or focusRate < 0.05 after >1h) → label 1, weight 0.4 ("you should have flagged this for cleanup")
-- Tab still open after 7 days with non-trivial focus → label 0, weight 0.4 ("don't flag this")
+**Cleanup — outcome labels** ([`trainCleanupOutcome`](../src/ml/cleanup.ts)). The old implicit rule labelled a tab "stale" from the same idle-time features the model reads — circular. Labels now come from what the user actually did with a backgrounded tab, once it has been out of sight ≥ 30 min:
+- switched back to it from another tab → **0** (it was still wanted);
+- closed it while it was in the background, not as part of a window closing → **1**.
 
-[`trainImplicitOpen`](../src/ml/recommend.ts):
-- Logged on every `open` / `navigate` event — the domain that was actually opened gets a positive sample, similar non-opened candidates get negatives.
+The SW trains these live (`startFocusSegment`, the close handler); the replay trainer reconstructs them from the log. On the July 2026 trace: 311 outcomes, only 8 of them "closed" — a hoarder almost never closes background tabs, which is why the rule-based Declutter tiers stay primary.
 
-The 0.4 weight is intentional — implicit signals are noisier than explicit "Keep" / "Close" clicks, so they shouldn't dominate the gradient.
+**Open — switch events** ([`trainImplicitOpen`](../src/ml/recommend.ts)). An open/navigate that lands on a new domain (an *arrival*; same-domain SPA routes are not), isn't the focused domain, wasn't seen in the last 2 min, and isn't already open in another tab — the exact rules the evaluator uses for test points. The live SW trains **before** writing the event, so the features can't see it (§21). One sampled-softmax group per switch: the opened domain against 8 negatives drawn from the serving candidate pool (§14).
 
 ## 8. Calibration thresholds
 
@@ -269,7 +274,7 @@ Sequence memory also fixes a deeper bug: the recommend pool was previously **pur
 
 The pre-fix implementation passed `focusedDomain: undefined, openDomains: []` to every implicit-positive training call, meaning `embedSimToFocused`, `isCurrentlyOpen`, and (now) `seqProb*` were all 0 at training time. The model was effectively learning the marginal feature distribution of opens, not the conditional "given context X, opening Y is good" — predictions collapsed to the prior rate.
 
-The fix: SW passes the real focus history, focused domain, and open domains. Training now also samples 5 random non-opened domains from the frecency pool as **negatives** (label=0, weight=0.2). Without explicit negatives, the LR can only learn "this is positive" and scores converge uselessly to the prior; with them, it learns to discriminate.
+The fix: SW passes the real focus history, focused domain, and open domains, and training samples explicit **negatives** (see §14 for how that distribution evolved). Without negatives, the LR can only learn "this is positive" and scores converge uselessly to the prior; with them, it learns to discriminate.
 
 ## 11. Embedding-cluster task state (cleanup head)
 
@@ -290,25 +295,23 @@ The OnlineLogReg recommend head is linear after standardization — it can't lea
 
 ### Training data construction
 
-Walk `db.events` (last 30 days, capped at 1500 events). For each `'open'` / `'navigate'` event:
-1. Maintain a rolling `focusHistory` from the focus events seen in chronological order.
-2. The opened domain → positive sample (label = 1) with features computed from current state at that ts.
-3. Sample 3 random domains from the frecency pool that were NOT just opened → negative samples (label = 0).
-4. `RandomForest.fit(X, y)` → persist to KV `model:recommend:forest:v1`.
+[`trainRecommendForest`](../src/ml/rf-train.ts) walks the **whole** log with point-in-time state (§21) and takes the switch points of the last 30 days before the newest event (anchored to the data, not the wall clock — after a month away the wall-clock window would be empty):
+1. Positive: the opened domain (≤ 1 per domain per 30 min), weighted by forward dwell × `openedFrom` intent.
+2. 6 negatives drawn from the candidate pool serving would have ranked at that moment.
+3. Features from the shared builder, as of that moment. The newest 600 positives are kept; `RandomForest.fit` → `model:recommend:forest:v4`.
 
-If there aren't enough events for stable training (< 20 samples), the trainer skips the save rather than overwrite a previously-good forest with noise.
+If there aren't enough samples for stable training (< 20 rows), the trainer skips the save rather than overwrite a previously-good forest with noise.
 
 ### Inference
 
 In [`recommendOpen`](../src/ml/recommend.ts), each candidate's feature vector is scored by both the LR head and the forest:
 
 ```
-baseScore = forestReady
-  ? 0.5 * lrScore + 0.5 * forest.predict(x)
-  : lrScore   // fallback if forest hasn't been trained yet
+share     = 0.5 · min(1, forest.trainedSamples / 14 000)    # grows with what it was fit on
+baseScore = (1 − share) · lrScore + share · forest.predict(x)
 ```
 
-Equal weight for now. Could be learned per-user later by a calibration pass that weights each model by its empirical accuracy on held-out events.
+The share used to be a fixed 50%. A forest fit on ~200 switches (two weeks) is mostly noise and pulled the prior-anchored LR down (backtest MRR 0.18 → 0.16), so it now earns its half-share by ~2000 switches.
 
 The forest cache is invalidated after a successful retrain (via `invalidateForestCache()`) so the next inference picks up the new weights without an SW restart.
 
@@ -345,9 +348,10 @@ Negative-sample distribution history for `trainImplicitOpen` / the forest datase
 |---|---|---|
 | v5 | Top-60 frecency only | Model learned "popular / co-occurring = negative"; `cooccurrenceWithFocused` weight hit −2.0; OracleHint top-1 systematically wrong |
 | v6 | Uniform over `db.domains` | Fixed the shortcut, but all negatives are "easy" — random domains share no context features with the positive. Model learns plausible-vs-random, not which-plausible-one |
-| **v7** | **3 easy (uniform) + 2 hard (sequence model's own top predictions that the user did NOT open)** | Hard negatives share the positive's context profile (high cooccurrence, high seqProb), so only fine-grained feature interplay separates them — exactly the decision boundary the live ranking needs |
+| v7 | 3 easy (uniform) + 2 hard (sequence model's own top predictions that the user did NOT open) | The "hard" negatives were exactly the domains the sequence features rank high, so the model learned *a high `seqProbShort` marks a negative* (its weight went negative); the easy ones were random, so it never practised the real choice |
+| **v11** | **8 drawn uniformly from the serving candidate pool** ([`candidatePool`](../src/ml/recommend.ts)) | — the model is trained on the decision it is asked to make: the opened domain against the other candidates the pool held at that moment. Serving, live training, replay and the forest share the one pool builder |
 
-When the sequence memory is too young to supply hard negatives, the easy count tops up to keep total negative weight constant (class balance is preserved at pos 1.0 ≈ neg 5 × 0.2).
+On a point-in-time backtest the v11 distribution (with log-scaled inputs, §2) lifted MRR from 0.094 to 0.11 on its own; the prior + learning-rate fix (§3) took it to 0.18.
 
 ## 15. Dwell-time feedback (bandit nudges on close)
 
@@ -359,15 +363,15 @@ An open is only half the signal — what happened next tells us whether it was a
 
 This goes through the bandit, not the LR, because LR features describe the *context at open time*, which is gone by close time — but the bandit is per-domain and context-free, so a close-time nudge is well-defined. Soft accepts deliberately don't increment the `acceptances` counter, which stays reserved for explicit user actions.
 
-## 16. Offline replay evaluation
+## 16. Offline evaluation
 
-[`evaluateRecommend`](../src/ml/eval.ts) replays the event log chronologically, reconstructs the focus-history context before each historical open, asks the current model to rank candidates for that context (deterministic mode — bandit posterior mean instead of Thompson sampling), and reports **hit@1 / hit@3 / hit@5 / MRR** against a pure-frecency baseline. Surfaced in Settings → Advanced → "Prediction quality".
+[`evaluateRecommend`](../src/ml/eval.ts) walks the log chronologically with point-in-time state (§21) and, at each switch point, ranks the candidates exactly as serving would (same pool, same exclusions — open and focused domains never rank) in deterministic mode. It reports **hit@1 / hit@3 / hit@5 / MRR / recall@pool** against a point-in-time frecency baseline, each hit rate with a **Wilson 95% interval**, on the newest 250 points (±6 pts at hit@1 ≈ 40%; the old 60-point sample was ±12). Surfaced in Settings → Advanced → Prediction quality.
 
-Honest caveats, also shown in the UI:
+- **Backtest** — fresh LR (+ MLP if enabled) and forest trained only on switches before the split (7 days before the newest event), bandit empty; scored on the switches after it. The honest generalization number.
+- **Replay** — today's trained scorer on the newest points. It has trained on them, so use it for before/after deltas only.
+- **Breakdown** — per kind of open (`typed` in a new tab — the new-tab-page moment; `link` — new tab from a link; `inTab` — link followed in place) and the count of **novel** targets (never visited before the point: unreachable for any ranker, so `1 − novel/n` is the ceiling).
 
-- **Replay, not backtest** — the model has already trained on these events, so absolute numbers are optimistic. The value is in the *delta*: run before and after a model change.
-- Aggregates (domain stats, embeddings, sequence memory) are at their current state, not as-of each event; time-series features ARE computed as-of each event (the snapshot accepts a historical `now`).
-- The baseline comparison answers the question that actually matters: *is the ML stack beating a no-ML frecency sort?* If the Δ column is ever consistently negative, the model is hurting and something is wrong.
+Real-data check, opt-in and seeded so it repeats: `AUGUR_BACKUP=… npx vitest run tests/real-data.test.ts` imports a backup into a fake database, re-runs the warm-up chain and prints both reports.
 
 ## 17. Inference performance
 
@@ -399,7 +403,7 @@ Three more subsystems landed in v8 beyond the Phase 0–4 core:
 
 **Tiny wide-&-deep MLP (Phase 5, opt-in).** [`models/mlp.ts`](../src/ml/models/mlp.ts) — one tanh hidden layer (16 units), hand-written backprop, same group-softmax objective as the LR, ~600 params. It trains in the background on every group but is **OFF by default**: the live ensemble stays LR+RF until the user enables it (Settings → Advanced toggle) after evaluation confirms it helps. Honors the plan's contingency rule — built and trainable so it's verifiable, dormant until earned.
 
-> **Verdict (2026-07-29): keep it OFF — it does not earn its place.** Once the MLP reached readiness (344 trained groups on ~16k events), a **replay** A/B (the *only* mode that exercises the MLP — the backtest trains a fresh LR-only override with `mlp = null`, so it is blind to the neural head) showed no gain: MLP-off `hit@1 43% / hit@3 88% / MRR 65%` vs MLP-on `40% / 85% / 63%` — flat-to-slightly-negative, within the n=60 (±~6%) noise band. Expected: with `hit@3` already at the ~81% predictability ceiling, a 600-param net on a few hundred groups has no headroom. Note the DIN attention feature (`dinAttention`, §20) is a *feature* baked into the LR/forest and stays ON — it is not the MLP and is unaffected by this verdict. To re-test after much more data: enable the toggle, run **评估/replay** (not 回测/backtest) off then on, and compare the delta.
+> **Verdict (2026-07-29): keep it OFF — it does not earn its place.** (The numbers below came from the pre-§21 evaluator and are inflated; the conclusion — no gain from the MLP at this data size — is unaffected.) Once the MLP reached readiness (344 trained groups on ~16k events), a **replay** A/B (the *only* mode that exercises the MLP — the backtest trains a fresh LR-only override with `mlp = null`, so it is blind to the neural head) showed no gain: MLP-off `hit@1 43% / hit@3 88% / MRR 65%` vs MLP-on `40% / 85% / 63%` — flat-to-slightly-negative, within the n=60 (±~6%) noise band. Expected: with `hit@3` already at the ~81% predictability ceiling, a 600-param net on a few hundred groups has no headroom. Note the DIN attention feature (`dinAttention`, §20) is a *feature* baked into the LR/forest and stays ON — it is not the MLP and is unaffected by this verdict. To re-test after much more data: since v0.5 the **backtest** includes a split-trained MLP whenever the toggle is on, so run 回测/backtest with the toggle off, then on, and compare the deltas against their 95% intervals.
 
 **Final-score calibration (Phase 4.2 complete).** [`blendcalib.ts`](../src/ml/blendcalib.ts) fits a 2-param Platt layer over the blended ensemble score against realized outcomes (`oracle_shown` → opened-within-5-min, joined from the event log), retrained in the nightly alarm. OracleHint thresholds on a genuinely calibrated probability; the transform is monotonic so ranking is unchanged.
 
@@ -425,9 +429,36 @@ with temperature `τ = 0.25` and a recency prior `ρ = 0.85` (each step back in 
 
 **Deliberately parameter-free** (fixed τ + recency prior, no learned attention MLP): full DIN learns its attention network from millions of users; on one user's thousands of events those parameters would overfit before they helped. As with every other predictor in the stack, the LR / forest / MLP heads learn *how much to trust* this one number — a useless signal self-gates to a ~0 weight, so no separate gating is needed.
 
-Offline validation on a real 7-day event trace (cold 31-domain embedding): P(true-next-domain scores higher than a random distractor) = **0.71** as a standalone signal (0.5 = no signal). It's a modest additive lift on top of an already-strong ensemble, not a step change — the honest expectation is a few points of hit@1.
+Offline validation on a real 7-day event trace (cold 31-domain embedding): P(true-next-domain scores higher than a random distractor) = **0.71** as a standalone signal (0.5 = no signal). That test is too easy — real competitors are the other plausible candidates in the pool, not random domains — so treat it as an upper bound; the honest expectation is a few points of hit@1.
 
-## 21. What's NOT done
+## 21. Point-in-time training and evaluation (v0.5)
+
+The July 2026 audit found that training and evaluation read **today's** tables to describe **past** moments. The positive's own visit made it look "visited in the last 30 min, 0 h ago, velocity up"; the embedding already knew co-visits that happened later; test-period domains reached the candidate pool through it. The model learned to exploit all of it, and the evaluator rewarded it: the replay said hit@3 88%.
+
+Now every consumer builds features through **one builder** ([`candidate-features.ts`](../src/ml/candidate-features.ts)) from an `AggregateSource` ([`sources.ts`](../src/ml/sources.ts)) and a `ModelBundle`:
+
+| Consumer | Aggregates | Learned inputs |
+|---|---|---|
+| Live serving | live DB, half-open windows `[t − w, t)` | live caches |
+| Live training | live DB — the SW trains **before** writing the event | live caches |
+| Replay, forest, evaluation | [`PointInTimeAggregates`](../src/ml/pit.ts) | rebuilt by the same replay |
+
+`PointInTimeAggregates` replays the log in order with the SW's own update rules — domain stats and co-occurrence via the shared `AggregateReplayer`, velocity/session windows, sequence memory, factorized transitions, circadian histogram, URL prefixes, page-text vectors (the same pure `applyUrlPrefix` / `applyDomainText` the SW uses) and the skip-gram embedding (one batch per 12 h of event time, like the `embeddingRetrain` alarm). Frecency is exact time decay (`decayAt` anchor, read through `frecencyAt`); co-occurrence decays at read time (`pairCountAt`). [`walk.ts`](../src/ml/walk.ts) is the one definition of a switch point, including the open-tab set reconstructed from the log. `tests/pit-parity.test.ts` asserts that point-in-time aggregates equal the live tables at the same instant and that both sources give identical feature vectors.
+
+What each fix was worth on the July 2026 trace (backtest, 120 held-out switches; frecency baseline hit@1 0%, hit@3 8.3%, MRR 0.070):
+
+| Step | hit@1 | hit@3 | MRR |
+|---|---|---|---|
+| Old evaluator (leaky, as shown in the app) | ~40% | ~80% | — |
+| Point-in-time aggregates, today's embedding/prefixes/text | 12.5% | 20.8% | 0.205 |
+| + no future domains in the pool | 6.7% | 11.7% | 0.116 |
+| + embedding, prefixes, text rebuilt point-in-time | 3.3% | 10.0% | 0.094 |
+| + negatives from the serving pool, log-scaled inputs | 5.3% | 10.3% | 0.108 |
+| + recency prior, LR lr 0.001, data-sized forest share | **10.5%** | **22.8%** | **0.180** |
+
+The middle rows are the honest-but-broken state: once nothing leaked, the trained ensemble was *below* a two-feature recency rule (10.8% / 20.8%). The last two rows are the actual model fixes. Ceiling: 56% (44% of the targets were first-ever visits).
+
+## 22. What's NOT done
 
 Conscious choices to keep the model surface manageable:
 
