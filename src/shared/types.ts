@@ -155,7 +155,10 @@ export interface DomainGroup {
 
 // ─── ML / aggregates ─────────────────────────────────────────────────────────
 
+// visitsDecay is an exact exponentially-decayed visit count Σ exp(−age/τ),
+// current as of `decayAt`; read it through aggregate.frecencyAt(stats, now).
 export interface DomainStats {
+  decayAt?: number;
   domain: string;
   visitCount: number;
   visitsDecay: number;

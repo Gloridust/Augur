@@ -120,7 +120,11 @@ async function recentlyFocusedDomains(now: number): Promise<string[]> {
   return Array.from(new Set(rows.map((e) => e.domain).filter((d): d is string => !!d)));
 }
 
-async function buildOpenContext(now: number, ownTabId?: number): Promise<{
+async function buildOpenContext(
+  now: number,
+  ownTabId: number | undefined,
+  sessionStartTs: number,
+): Promise<{
   focusHistory: string[];
   focusedDomain?: string;
   openDomains: string[];
@@ -139,7 +143,6 @@ async function buildOpenContext(now: number, ownTabId?: number): Promise<{
     .map((s) => s.domain)
     .filter((d): d is string => !!d);
   const recent = await recentlyFocusedDomains(now);
-  const sessionStartTs = await touchSession(now);
   return {
     focusHistory,
     focusedDomain,
@@ -160,12 +163,27 @@ async function logEvent(
   const event: TabEvent = { ...partial, ...stamp };
   const openLike = (event.type === 'open' || event.type === 'navigate') && !!event.domain;
   try {
-    // Capture the training context BEFORE persisting the event. The switch
-    // filter asks "was this domain seen in the last 2 minutes?" — with the
-    // row already written the answer was always yes (the event saw itself),
-    // so from v0.3.0 until this fix NO live open ever trained the model; all
-    // learning came from manual replays and the post-update warm-up.
-    const ctx = openLike && arrival ? await buildOpenContext(event.ts, event.tabId) : undefined;
+    const sessionStartTs = await touchSession(event.ts);
+
+    // LEARN FROM THE OPEN BEFORE RECORDING IT. Training must see the world
+    // exactly as serving would have just before this open — no trace of the
+    // open itself. Two bugs lived here:
+    //   - the event was written first, so the 2-min switch filter always
+    //     found it ("seen just now") and returned: from v0.3.0 no live open
+    //     ever trained the model;
+    //   - and even when it did, the positive's features (visited-in-the-last-
+    //     30-min, recency, velocity, frecency, co-occurrence) included the
+    //     open itself — a target leak.
+    // A training failure must never cost us the event, so it's isolated.
+    if (openLike && arrival && event.domain) {
+      try {
+        const ctx = await buildOpenContext(event.ts, event.tabId, sessionStartTs);
+        await trainImplicitOpen(event, ctx);
+      } catch (err) {
+        void logError('trainImplicitOpen', err);
+      }
+    }
+
     await db.events.add(event);
     await updateOnEvent(event, arrival);
     // Keep the personal-circadian histogram current for any tracked event.
@@ -176,10 +194,7 @@ async function logEvent(
       // Semantic text vector — fold the page's title+URL words into the
       // domain's running-mean text embedding (the "meaning" layer).
       await observeDomainText(event.domain, event.title, event.url, event.ts);
-      if (ctx) {
-        await updateCooccurrenceForOpen(event.domain, event.ts);
-        await trainImplicitOpen(event, ctx);
-      }
+      if (arrival) await updateCooccurrenceForOpen(event.domain, event.ts);
     }
   } catch (err) {
     void logError('logEvent', err);

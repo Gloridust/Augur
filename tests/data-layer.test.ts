@@ -66,7 +66,7 @@ describe('aggregates', () => {
     expect((await w.db.domains.get('app.com'))?.visitCount).toBe(2); // open + return from docs
     expect((await w.db.domains.get('docs.com'))?.visitCount).toBe(1);
     const pair = await w.db.cooccurrence.get('app.com::docs.com');
-    expect(pair?.count).toBe(2); // docs after app, app after docs
+    expect(pair?.count).toBeCloseTo(2, 4); // docs after app, app after docs (exact decay between)
   });
 
   it('live path: a same-domain navigate does not bump visits; a cross-domain one does', async () => {

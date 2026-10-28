@@ -1,32 +1,40 @@
 // Offline evaluation for the recommend head — replay and backtest.
 //
-// REPLAY (default): walks the event log, reconstructs the focus-history
-// context before each historical switch-open, asks the CURRENT model to
-// rank candidates, and checks where the actually-opened domain landed.
-// Reports hit@1/3/5 + MRR + recall@pool vs a frecency baseline. The model
-// has already trained on these events, so absolute numbers are optimistic
-// — the value is the RELATIVE delta before/after a change.
+// Both modes walk the event log chronologically with POINT-IN-TIME state
+// (./walk + ./pit): every test point is scored with features built only from
+// events before it — the same view live serving has when it predicts. (The
+// previous evaluator scored past events against today's tables: the target's
+// own visit made it look "visited in the last 30 min, 0 h ago", which the
+// model had learned to exploit, so its scores were inflated.)
 //
-// BACKTEST: trains a FRESH model on events before a time split, then
-// evaluates on events after it — a genuine generalization number, no
-// leakage. Slower (run on demand). Aggregates/embeddings/sequence memory
-// stay at their current state (documented approximation; only the LR is
-// retrained on the split).
+// REPLAY: the CURRENT live model ranks candidates at the newest test points.
+// It has trained on these events, so it is optimistic — use it for RELATIVE
+// before/after comparisons.
+//
+// BACKTEST: fresh LR (+ MLP when the user has it enabled) trained on switch
+// points before a time split; a fresh forest fit on events before the split;
+// evaluated on points after it. The honest generalization number.
+// Residual approximation: embeddings, the bandit, URL prefixes and page-text
+// vectors are their current state (diffuse, documented in doc/ML.md).
 //
 // recall@pool = fraction of test points whose target was in the candidate
-// pool AT ALL. Separates "ranking failed" from "candidate generation
-// failed" — they need different fixes.
+// pool AT ALL — separates "ranking failed" from "candidate generation failed".
+//
+// Every rate comes with a Wilson 95% interval: with ~250 test points a hit@1
+// of 40% is ±6 pts; with the old 60 it was ±12 — too wide to tell a change
+// from noise.
 
 import { db } from '../shared/db';
 import type { TabEvent } from '../shared/types';
-import { getTopDomainsByFrecency } from './aggregate';
+import type { ModelBundle } from './candidate-features';
 import { RECOMMEND_FEATURE_NAMES } from './features';
 import { OnlineLogReg } from './models/logreg';
-import { scoreOpenCandidates, trainImplicitOpen } from './recommend';
-import {
-  appendEvalHistory,
-  RECOMMEND_MODEL_VERSION,
-} from './persistence';
+import { TinyMLP } from './models/mlp';
+import { appendEvalHistory, RECOMMEND_MODEL_VERSION } from './persistence';
+import { PointInTimeAggregates } from './pit';
+import { liveModels, mlpStatus, scoreOpenCandidates, trainImplicitOpen } from './recommend';
+import { trainRecommendForest } from './rf-train';
+import { walkEvents } from './walk';
 
 export interface EvalMetrics {
   hit1: number;
@@ -35,28 +43,24 @@ export interface EvalMetrics {
   mrr: number;
 }
 
+export type Interval = [number, number];
+
 export interface EvalReport {
   mode: 'replay' | 'backtest';
   evaluated: number;
   skipped: number;
   model: EvalMetrics & { recallAtPool: number };
   baseline: EvalMetrics;
+  // Wilson 95% intervals for the model's hit rates.
+  ci: { hit1: Interval; hit3: Interval; hit5: Interval };
+  // Backtest: which ensemble members were evaluated.
+  ensemble: string;
   tookMs: number;
 }
 
-interface TestPoint {
-  event: TabEvent;
-  focusHistory: string[];
-  sessionStartTs: number;
-}
-
-const FOCUS_HISTORY_MAX = 8;
-const SESSION_GAP_MS = 30 * 60 * 1000;
-// 2 min (was 15): only guards against rapid duplicate opens of a domain you
-// were literally just on. A 15-min window wrongly excluded legitimate returns
-// (e.g. back to GitHub after a few minutes on Slack) — those ARE new-intent
-// switches and predictable. See the switch-filter note in recommend.ts.
-const RECENT_FOCUS_MS = 2 * 60 * 1000;
+const FEATURE_COUNT = RECOMMEND_FEATURE_NAMES.length;
+const DEFAULT_SAMPLE = 250;
+const MAX_TRAIN_POINTS = 1500;
 
 function emptyAcc() {
   return { hits1: 0, hits3: 0, hits5: 0, rrSum: 0, inPool: 0 };
@@ -69,42 +73,13 @@ function record(acc: ReturnType<typeof emptyAcc>, rank: number, inPool: boolean)
   if (inPool) acc.inPool += 1;
 }
 
-// Collect chronological switch-open test points, tracking the focus history
-// and session start as they were at each point in time.
-function collectPoints(events: TabEvent[]): TestPoint[] {
-  const focusHistory: string[] = [];
-  const recentFocus: Array<{ domain: string; ts: number }> = [];
-  const points: TestPoint[] = [];
-  let sessionStartTs = events[0]?.ts ?? Date.now();
-  let lastEventTs = sessionStartTs;
-
-  for (const e of events) {
-    if (e.ts - lastEventTs > SESSION_GAP_MS) sessionStartTs = e.ts;
-    lastEventTs = e.ts;
-    if (e.type === 'focus' && e.domain && e.tabId !== undefined) {
-      if (focusHistory[focusHistory.length - 1] !== e.domain) {
-        focusHistory.push(e.domain);
-        if (focusHistory.length > FOCUS_HISTORY_MAX) focusHistory.shift();
-      }
-      recentFocus.push({ domain: e.domain, ts: e.ts });
-      continue;
-    }
-    if (e.type !== 'open' && e.type !== 'navigate') continue;
-    if (!e.domain || e.tabId === undefined) continue;
-    const meta = e.meta as Record<string, unknown> | undefined;
-    if (meta?.source === 'history-bootstrap') continue;
-    while (recentFocus.length && e.ts - recentFocus[0].ts > RECENT_FOCUS_MS) {
-      recentFocus.shift();
-    }
-    const focused = focusHistory[focusHistory.length - 1];
-    const recentSet = new Set(recentFocus.map((r) => r.domain));
-    // Only switch-events are test points (matches training distribution).
-    if (focusHistory.length >= 1 && e.domain !== focused && !recentSet.has(e.domain)) {
-      points.push({ event: e, focusHistory: [...focusHistory], sessionStartTs });
-    }
-    if (e.domain) recentFocus.push({ domain: e.domain, ts: e.ts });
-  }
-  return points;
+export function wilson(k: number, n: number, z = 1.96): Interval {
+  if (n === 0) return [0, 0];
+  const p = k / n;
+  const denom = 1 + (z * z) / n;
+  const center = (p + (z * z) / (2 * n)) / denom;
+  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  return [Math.max(0, center - half), Math.min(1, center + half)];
 }
 
 export async function evaluateRecommend(opts: {
@@ -116,91 +91,111 @@ export async function evaluateRecommend(opts: {
 } = {}): Promise<EvalReport> {
   const t0 = Date.now();
   const mode = opts.mode ?? 'replay';
-  const sample = Math.max(1, opts.sample ?? 60);
+  const sample = Math.max(1, opts.sample ?? DEFAULT_SAMPLE);
+  const events: TabEvent[] = await db.events.orderBy('ts').toArray();
+  const splitTs = Date.now() - (opts.splitDays ?? 7) * 24 * 60 * 60 * 1000;
 
-  const events = await db.events.orderBy('ts').toArray();
-  const allPoints = collectPoints(events);
+  // ── Pass 1 (cheap): pick test points and backtest training points ─────
+  const allPoints: TabEvent[] = [];
+  await walkEvents(events, null, (e, point) => {
+    if (point) allPoints.push(e);
+  });
+  const testCandidates = mode === 'backtest' ? allPoints.filter((e) => e.ts >= splitTs) : allPoints;
+  const testSet = new Set(testCandidates.slice(-sample));
+  const trainSet = new Set(
+    mode === 'backtest' ? allPoints.filter((e) => e.ts < splitTs).slice(-MAX_TRAIN_POINTS) : [],
+  );
 
-  // For backtest: train a fresh model on pre-split events, test on post-split.
+  // ── Split-local models (backtest) ─────────────────────────────────────
   let modelOverride: OnlineLogReg | undefined;
-  let testPoints: TestPoint[];
-
+  let mlpOverride: TinyMLP | null | undefined;
+  let forestOverride: Awaited<ReturnType<typeof trainRecommendForest>>['forest'] | null | undefined;
+  let ensemble = 'live';
   if (mode === 'backtest') {
-    const splitTs = Date.now() - (opts.splitDays ?? 7) * 24 * 60 * 60 * 1000;
-    const fresh = new OnlineLogReg(RECOMMEND_FEATURE_NAMES.length, {
-      lr: 0.01,
-      l2: 1e-4,
-      l1: 1e-5,
-    });
-    fresh.setPriorRate(0.25);
-    // Replay-train the fresh model on switch-opens BEFORE the split. Cap to
-    // the most recent N pre-split points so an on-demand backtest stays in
-    // the low seconds (each point does a domains scan + per-candidate stat
-    // lookups).
-    const trainEvents = events.filter((e) => e.ts < splitTs);
-    const trainPoints = collectPoints(trainEvents).slice(-1000);
-    for (const p of trainPoints) {
-      await trainImplicitOpen(p.event, {
-        focusHistory: p.focusHistory,
-        focusedDomain: p.focusHistory[p.focusHistory.length - 1],
-        openDomains: p.focusHistory,
-        sessionStartTs: p.sessionStartTs,
-        modelOverride: fresh,
-      });
-    }
-    modelOverride = fresh;
-    testPoints = allPoints.filter((p) => p.event.ts >= splitTs).slice(-sample);
-  } else {
-    testPoints = allPoints.slice(-sample);
+    modelOverride = new OnlineLogReg(FEATURE_COUNT, { lr: 0.01, l2: 1e-4, l1: 1e-5 });
+    modelOverride.setPriorRate(0.25);
+    const useMlp = (await mlpStatus()).enabled;
+    mlpOverride = useMlp ? new TinyMLP(FEATURE_COUNT) : null;
+    forestOverride = (await trainRecommendForest({ endTs: splitTs, persist: false })).forest ?? null;
+    ensemble = ['lr', forestOverride ? 'forest' : null, useMlp ? 'mlp' : null]
+      .filter(Boolean)
+      .join('+');
   }
 
-  const skipped = allPoints.length - testPoints.length;
-
-  // Frecency baseline (computed once).
-  const frecency = await getTopDomainsByFrecency(100);
-  const frecencyRank = new Map<string, number>();
-  frecency.forEach((d, i) => frecencyRank.set(d.domain, i + 1));
-
+  // ── Pass 2: point-in-time walk — train before the split, score after ──
+  const pit = new PointInTimeAggregates(7);
+  const live = await liveModels();
+  const models: ModelBundle = {
+    ...live,
+    seq: pit.seq,
+    transition: pit.transition,
+    hourActivityZ: (h) => pit.hourActivityZ(h),
+  };
   const modelAcc = emptyAcc();
   const baseAcc = emptyAcc();
   let evaluated = 0;
 
-  for (const p of testPoints) {
-    const e = p.event;
-    const hour = e.hourOfDay ?? new Date(e.ts).getHours();
-    const dow = e.dayOfWeek ?? new Date(e.ts).getDay();
-    const focusedDomain = p.focusHistory[p.focusHistory.length - 1];
+  await walkEvents(events, pit, async (e, point) => {
+    if (!point) return;
+    const src = pit.source(e.ts);
+    if (trainSet.has(e)) {
+      await trainImplicitOpen(e, {
+        focusHistory: point.focusHistory,
+        focusedDomain: point.focusedDomain,
+        openDomains: point.focusHistory,
+        recentlyFocusedDomains: point.recentlyFocused,
+        sessionStartTs: point.sessionStartTs,
+        modelOverride,
+        mlpOverride: mlpOverride ?? undefined,
+        source: src,
+        models,
+      });
+      return;
+    }
+    if (!testSet.has(e)) return;
 
+    const target = e.domain!;
     let ranked;
     try {
       ranked = await scoreOpenCandidates(
         {
-          hour,
-          dow,
-          focusedDomain,
+          hour: e.hourOfDay ?? new Date(e.ts).getHours(),
+          dow: e.dayOfWeek ?? new Date(e.ts).getDay(),
+          focusedDomain: point.focusedDomain,
           openDomains: [],
           pinnedDomains: [],
-          focusHistory: p.focusHistory,
-          sessionStartTs: p.sessionStartTs,
+          focusHistory: point.focusHistory,
+          sessionStartTs: point.sessionStartTs,
         },
-        { deterministic: true, now: e.ts, modelOverride },
+        {
+          deterministic: true,
+          now: e.ts,
+          modelOverride,
+          forestOverride,
+          mlpOverride,
+          source: src,
+          models,
+          evaluation: true,
+        },
       );
     } catch {
-      continue;
+      return;
     }
-
-    const target = e.domain!;
     const idx = ranked.findIndex((c) => c.domain === target);
     record(modelAcc, idx >= 0 ? idx + 1 : Infinity, idx >= 0);
-    record(baseAcc, frecencyRank.get(target) ?? Infinity, frecencyRank.has(target));
+
+    // Baseline: point-in-time frecency (no ML), same exclusions.
+    const freq = (await src.topByFrecency(101)).filter((s) => s.domain !== point.focusedDomain);
+    const bIdx = freq.findIndex((s) => s.domain === target);
+    record(baseAcc, bIdx >= 0 ? bIdx + 1 : Infinity, bIdx >= 0);
     evaluated += 1;
-  }
+  });
 
   const n = Math.max(1, evaluated);
   const report: EvalReport = {
     mode,
     evaluated,
-    skipped,
+    skipped: allPoints.length - evaluated,
     model: {
       hit1: modelAcc.hits1 / n,
       hit3: modelAcc.hits3 / n,
@@ -214,6 +209,12 @@ export async function evaluateRecommend(opts: {
       hit5: baseAcc.hits5 / n,
       mrr: baseAcc.rrSum / n,
     },
+    ci: {
+      hit1: wilson(modelAcc.hits1, evaluated),
+      hit3: wilson(modelAcc.hits3, evaluated),
+      hit5: wilson(modelAcc.hits5, evaluated),
+    },
+    ensemble,
     tookMs: Date.now() - t0,
   };
 

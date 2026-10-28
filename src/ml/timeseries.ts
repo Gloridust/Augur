@@ -1,5 +1,10 @@
 import { db } from '../shared/db';
 
+// All windows are HALF-OPEN [now − window, now): a feature computed for an
+// event at time t must never see that event (or anything after it). With an
+// inclusive upper bound, training examples built for an open saw the open
+// itself — sessionContext was 1 and velocity inflated for every positive, a
+// target leak that made them the top-weighted features.
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const WINDOW_MS = 24 * HOUR;
@@ -16,7 +21,7 @@ export async function visitVelocity(domain: string, now: number = Date.now()): P
   const since = now - BASELINE_MS;
   const events = await db.events
     .where('[domain+ts]')
-    .between([domain, since], [domain, now], true, true)
+    .between([domain, since], [domain, now], true, false)
     .filter((e) => e.type === 'open' || e.type === 'navigate')
     .toArray();
   if (events.length === 0) return 0;
@@ -35,7 +40,7 @@ export async function sessionContext(domain: string, now: number = Date.now()): 
   const since = now - SESSION_MS;
   const recent = await db.events
     .where('[domain+ts]')
-    .between([domain, since], [domain, now], true, true)
+    .between([domain, since], [domain, now], true, false)
     .filter((e) => e.type === 'open' || e.type === 'navigate' || e.type === 'focus')
     .first();
   return recent ? 1 : 0;
@@ -63,7 +68,7 @@ export async function buildTimeseriesSnapshot(
   const since = now - BASELINE_MS;
   const events = await db.events
     .where('ts')
-    .between(since, now, true, true)
+    .between(since, now, true, false)
     .toArray();
 
   const baselineCount = new Map<string, number>(); // open/navigate, 14d

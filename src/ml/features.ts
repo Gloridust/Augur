@@ -7,7 +7,7 @@ import type {
   TabRuntimeState,
 } from '../shared/types';
 import { softmax } from './math';
-import { getCooccurrenceSum, getDomainStats } from './aggregate';
+import { frecencyAt, getCooccurrenceSum, getDomainStats } from './aggregate';
 
 // IMPORTANT: append-only. Reordering breaks back-compat with persisted
 // model weights — the loader keys features by index, not by name. New
@@ -244,6 +244,9 @@ export async function buildRecommendFeatures(args: {
   // `getDomainStats` — ~120 fewer round-trips per scoring call. `undefined`
   // = "not provided, fetch it"; explicit `null` = "known-absent, don't fetch".
   stats?: DomainStats | null;
+  // Pre-computed co-occurrence with the focused domain (from an
+  // AggregateSource). Undefined = look it up in the live table.
+  cooccurrence?: number;
   now: number;
 }): Promise<RecommendFeatures> {
   const {
@@ -270,6 +273,7 @@ export async function buildRecommendFeatures(args: {
     factorizedTransition,
     dinAttention,
     stats: statsArg,
+    cooccurrence: cooccurrenceArg,
     now,
   } = args;
   // Pack the v8+v9 additions once — identical in both return branches below.
@@ -316,11 +320,11 @@ export async function buildRecommendFeatures(args: {
   const hourSoft = softmax(stats.hourDist.map((v) => Math.log1p(v)));
   const dowSoft = softmax(stats.dowDist.map((v) => Math.log1p(v)));
   const recencyHours = Math.max(0, (now - stats.lastVisit) / (60 * 60 * 1000));
-  const co = context.focusedDomain
-    ? await getCooccurrenceSum(domain, [context.focusedDomain])
-    : 0;
+  const co =
+    cooccurrenceArg ??
+    (context.focusedDomain ? await getCooccurrenceSum(domain, [context.focusedDomain]) : 0);
   return {
-    freqDecay: stats.visitsDecay,
+    freqDecay: frecencyAt(stats, now),
     avgFocusMs: stats.avgFocusMs,
     hourMatch: hourSoft[context.hour] ?? 0,
     dowMatch: dowSoft[context.dow] ?? 0,
