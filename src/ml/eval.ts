@@ -37,11 +37,11 @@
 import { db } from '../shared/db';
 import type { TabEvent } from '../shared/types';
 import type { ModelBundle } from './candidate-features';
-import { RECOMMEND_FEATURE_NAMES } from './features';
+import { RECOMMEND_FEATURE_NAMES, RECOMMEND_WEIGHT_PRIOR } from './features';
 import { OnlineLogReg } from './models/logreg';
 import { TinyMLP } from './models/mlp';
 import { BetaBandit } from './models/bandit';
-import { appendEvalHistory, RECOMMEND_MODEL_VERSION } from './persistence';
+import { appendEvalHistory, freshRecommendModel, RECOMMEND_MODEL_VERSION } from './persistence';
 import { PointInTimeAggregates } from './pit';
 import { liveModels, mlpStatus, scoreOpenCandidates, trainImplicitOpen } from './recommend';
 import { trainRecommendForest } from './rf-train';
@@ -138,8 +138,7 @@ export async function evaluateRecommend(opts: {
   let bandit = (await liveModels()).bandit;
   if (mode === 'backtest') {
     bandit = new BetaBandit();
-    modelOverride = new OnlineLogReg(FEATURE_COUNT, { lr: 0.01, l2: 1e-4, l1: 1e-5 });
-    modelOverride.setPriorRate(0.25);
+    modelOverride = freshRecommendModel(FEATURE_COUNT, RECOMMEND_WEIGHT_PRIOR);
     const useMlp = (await mlpStatus()).enabled;
     mlpOverride = useMlp ? new TinyMLP(FEATURE_COUNT) : null;
     forestOverride =

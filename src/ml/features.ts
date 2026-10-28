@@ -97,8 +97,36 @@ export function vectorFromCleanup(f: CleanupFeatures): number[] {
   return CLEANUP_FEATURE_NAMES.map((n) => Number(f[n]) || 0);
 }
 
+// Model-input transforms for the heavy-tailed recommend features. The
+// RecommendFeatures record keeps raw, human-readable values (reasons, debug
+// UI); the vector the models see is log-scaled where the signal lives in
+// ratios. Raw recencyHours ran 0 → 720 with a std of hundreds, so "1 h vs
+// 10 h since the last visit" — the single strongest signal in the data
+// (pure recency beat the whole ensemble 2× on a leak-free backtest) — was
+// a rounding error after the LR's linear standardization.
+const RECOMMEND_TRANSFORMS: Partial<Record<keyof RecommendFeatures, (v: number) => number>> = {
+  recencyHours: (v) => Math.log1p(Math.max(0, v)),
+  freqDecay: (v) => Math.log1p(Math.max(0, v)),
+  avgFocusMs: (v) => Math.log1p(Math.max(0, v) / 1000),
+  cooccurrenceWithFocused: (v) => Math.log1p(Math.max(0, v)),
+  minutesIntoSession: (v) => Math.log1p(Math.max(0, v)),
+};
+
+// Starting weights for a fresh recommend LR (standardized space): "recent,
+// then frequent". With little data the learned ranker should not do worse
+// than that rule — on the July 2026 leak-free backtest a from-zero LR trained
+// on ~100 switches scored half of what recency alone did — and the data
+// refines it from there.
+export const RECOMMEND_WEIGHT_PRIOR: number[] = RECOMMEND_FEATURE_NAMES.map(
+  (n) => (({ recencyHours: -1.0, freqDecay: 0.4 }) as Partial<Record<keyof RecommendFeatures, number>>)[n] ?? 0,
+);
+
 export function vectorFromRecommend(f: RecommendFeatures): number[] {
-  return RECOMMEND_FEATURE_NAMES.map((n) => Number(f[n]) || 0);
+  return RECOMMEND_FEATURE_NAMES.map((n) => {
+    const v = Number(f[n]) || 0;
+    const t = RECOMMEND_TRANSFORMS[n];
+    return t ? t(v) : v;
+  });
 }
 
 // How long a tab has been out of the user's sight. Single source of truth for

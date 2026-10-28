@@ -68,17 +68,21 @@ describe('live training', () => {
     const w = await freshWorld();
     await w.openTab({ id: 1, windowId: 1, url: 'https://a.com/', active: true });
     await w.activate(1);
-    // Some history so b.com exists as a known domain for negatives.
+    // Some history so the candidate pool has negatives: domains visited and
+    // closed again (open domains are never candidates).
     await w.openTab({ id: 2, windowId: 1, url: 'https://c.com/' });
     await w.openTab({ id: 3, windowId: 1, url: 'https://d.com/' });
     await w.activate(1);
+    await w.closeTab(2);
+    await w.closeTab(3);
 
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 10 * 60_000); // past the 2-min recency window
     await w.openTab({ id: 4, windowId: 1, url: 'https://b.com/' });
     await w.persistAll();
 
-    const row = await w.db.kv.get('model:recommend:v10');
+    const { RECOMMEND_MODEL_VERSION } = await import('../src/ml/persistence');
+    const row = await w.db.kv.get(RECOMMEND_MODEL_VERSION);
     const model = row?.value as { trainedSamples: number; positiveSamples: number } | undefined;
     expect(model?.positiveSamples ?? 0).toBeGreaterThanOrEqual(1);
   });

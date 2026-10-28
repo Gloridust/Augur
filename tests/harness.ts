@@ -45,7 +45,13 @@ export async function freshWorld(opts: { tabs?: MockTab[] } = {}) {
     await settle();
   };
 
-  return { mock, c, db, queue, flush, state, settle, persistAll, openTab, activate };
+  const closeTab = async (tabId: number, windowId = 1) => {
+    mock.tabs.delete(tabId);
+    await c.tabs.onRemoved.fire(tabId, { windowId, isWindowClosing: false });
+    await settle();
+  };
+
+  return { mock, c, db, queue, flush, state, settle, persistAll, openTab, activate, closeTab };
 }
 
 export const HOUR = 3_600_000;

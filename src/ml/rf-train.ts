@@ -24,6 +24,8 @@ import { RECOMMEND_FEATURE_NAMES, vectorFromRecommend } from './features';
 import {
   adoptSequenceMemory,
   adoptTransition,
+  candidatePool,
+  samplePoolNegatives,
   clearSequenceMemoryCache,
   liveModels,
   trainImplicitOpen,
@@ -37,7 +39,7 @@ import { saveRecommendForest, saveSequenceMemory } from './persistence';
 import { PointInTimeAggregates } from './pit';
 import { walkEvents } from './walk';
 
-const NEGATIVE_SAMPLES = 3; // per forest positive
+const NEGATIVE_SAMPLES = 6; // per forest positive, drawn from the serving pool
 const POSITIVE_LOOKBACK_DAYS = 30;
 const MAX_FOREST_POSITIVES = 600; // newest positives kept for the fit (runtime budget)
 const SESSION_DEDUP_MS = 30 * 60 * 1000; // forest: ≤1 positive per (domain, 30 min)
@@ -84,8 +86,8 @@ async function pitModels(pit: PointInTimeAggregates, bandit?: BetaBandit): Promi
 
 // ── Random forest ──────────────────────────────────────────────────────
 // For every switch-open in the last 30 days before `endTs`: one positive
-// (the opened domain) + NEGATIVE_SAMPLES negatives (1 hard from the sequence
-// model, the rest uniform over domains known at that time), features built
+// (the opened domain) + NEGATIVE_SAMPLES negatives drawn from the candidate
+// pool serving would have ranked at that moment, features built
 // point-in-time.
 export async function trainRecommendForest(
   // endTs: train only on events before this instant (the backtest uses the
@@ -135,20 +137,9 @@ export async function trainRecommendForest(
       },
       models,
     );
-    // Same exclusions as live training: open domains are never candidates.
-    const exclude = new Set([domain, point.focusedDomain ?? '', ...point.openDomains]);
-    const negs: string[] = [];
-    const hard = models.seq
-      .topPredictions(point.focusHistory, fc.hour, e.ts, 10)
-      .map((p) => p.domain)
-      .find((d) => d && !exclude.has(d) && !d.startsWith('chrome'));
-    if (hard) negs.push(hard);
-    const easy = (await src.domains()).filter(
-      (d) => d && !exclude.has(d) && !negs.includes(d) && !d.startsWith('chrome'),
-    );
-    while (negs.length < NEGATIVE_SAMPLES && easy.length > 0) {
-      negs.push(easy.splice(Math.floor(Math.random() * easy.length), 1)[0]);
-    }
+    const { pool } = await candidatePool(fc, src, models, { evaluation: true });
+    const negs = samplePoolNegatives(pool, domain, NEGATIVE_SAMPLES);
+    if (negs.length === 0) return;
     const x: number[][] = [];
     for (const d of [domain, ...negs]) {
       x.push(vectorFromRecommend(await buildCandidateFeatures(fc, d, src, models)));
@@ -233,6 +224,7 @@ const REPLAY_CAP = 60_000;
 export async function replayImplicitTraining(opts: { cap?: number } = {}): Promise<{
   openSamples: number;
   cleanupSamples: number;
+  cleanupClosed: number; // of cleanupSamples, labelled "closed while backgrounded"
 }> {
   const events = await db.events.orderBy('ts').toArray();
   const cap = opts.cap ?? REPLAY_CAP;
@@ -246,15 +238,18 @@ export async function replayImplicitTraining(opts: { cap?: number } = {}): Promi
 
   let openCount = 0;
   let cleanupCount = 0;
+  let closedCount = 0;
 
   await walkEvents(events, pit, async (e, point) => {
     const inWindow = e.ts >= windowStart;
     const tid = e.tabId;
 
     // ── Cleanup outcomes (refocused vs closed-while-backgrounded) ─────
-    if (tid !== undefined && e.domain && e.url) {
+    // blur/close rows carry no url — requiring one here meant no tab was
+    // ever marked backgrounded, so every refocus outcome was missed.
+    if (tid !== undefined && e.domain) {
       let st = tabs.get(tid);
-      if (!st && (e.type === 'open' || e.type === 'navigate' || e.type === 'focus')) {
+      if (!st && e.url && (e.type === 'open' || e.type === 'navigate' || e.type === 'focus')) {
         st = {
           tabId: tid,
           url: e.url,
@@ -269,7 +264,7 @@ export async function replayImplicitTraining(opts: { cap?: number } = {}): Promi
         tabs.set(tid, st);
       }
       if (st) {
-        if (e.type === 'navigate') {
+        if (e.type === 'navigate' && e.url) {
           st.url = e.url;
           st.domain = e.domain;
           st.title = e.title ?? st.title;
@@ -279,8 +274,9 @@ export async function replayImplicitTraining(opts: { cap?: number } = {}): Promi
           // ≥30-min idle gate lives in trainCleanupOutcome.
           if (inWindow && st.focusedAt === undefined && e.prevTabId !== undefined && e.prevTabId !== tid) {
             const stats = await pit.source(e.ts).stats(st.domain);
-            await trainCleanupOutcome({ features: outcomeFeatures(st, stats, e.ts), outcome: 'refocused' });
-            cleanupCount += 1;
+            if (await trainCleanupOutcome({ features: outcomeFeatures(st, stats, e.ts), outcome: 'refocused' })) {
+              cleanupCount += 1;
+            }
           }
           st.focusedAt = e.ts;
           st.focusCount += 1;
@@ -294,8 +290,10 @@ export async function replayImplicitTraining(opts: { cap?: number } = {}): Promi
             closeBursts.has(e.ts);
           if (inWindow && st.focusedAt === undefined && !windowClosing) {
             const stats = await pit.source(e.ts).stats(st.domain);
-            await trainCleanupOutcome({ features: outcomeFeatures(st, stats, e.ts), outcome: 'closed' });
-            cleanupCount += 1;
+            if (await trainCleanupOutcome({ features: outcomeFeatures(st, stats, e.ts), outcome: 'closed' })) {
+              cleanupCount += 1;
+              closedCount += 1;
+            }
           }
           tabs.delete(tid);
         }
@@ -320,7 +318,7 @@ export async function replayImplicitTraining(opts: { cap?: number } = {}): Promi
 
   await adoptSequenceMemory(pit.seq);
   await adoptTransition(pit.transition);
-  return { openSamples: openCount, cleanupSamples: cleanupCount };
+  return { openSamples: openCount, cleanupSamples: cleanupCount, cleanupClosed: closedCount };
 }
 
 // Timestamps (ms) at which ≥3 tabs closed within the same second — a window

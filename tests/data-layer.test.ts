@@ -107,6 +107,10 @@ describe('replay trainer', () => {
     const { replayImplicitTraining } = await import('../src/ml/rf-train');
     const t = Date.now() - 10 * HOUR;
     const rows: TabEvent[] = [];
+    // An earlier, closed visit — the candidate pool needs a non-open domain
+    // to rank the opened one against.
+    rows.push(ev({ type: 'open', ts: t - HOUR, tabId: 9, url: 'https://x.com/', domain: 'x.com' }));
+    rows.push(ev({ type: 'close', ts: t - HOUR + 60_000, tabId: 9, url: 'https://x.com/', domain: 'x.com' }));
     // Tabs 1 (a.com) and 2 (b.com); user ping-pongs, then leaves tab 1 in the
     // background for 2h and comes back; tab 3 is opened, backgrounded, closed 3h later.
     rows.push(ev({ type: 'open', ts: t, tabId: 1, url: 'https://a.com/', domain: 'a.com' }));

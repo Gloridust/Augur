@@ -406,11 +406,12 @@ export function outcomeFeatures(
 export async function trainCleanupOutcome(args: {
   features: CleanupFeatures;
   outcome: 'refocused' | 'closed';
-}): Promise<void> {
-  if (args.features.timeSinceFocusMs < OUTCOME_MIN_IDLE_MS) return;
+}): Promise<boolean> {
+  if (args.features.timeSinceFocusMs < OUTCOME_MIN_IDLE_MS) return false;
   const model = await getModel();
   model.update(vectorFromCleanup(args.features), args.outcome === 'closed' ? 1 : 0, 1);
   persistModel(model);
+  return true;
 }
 
 export function clearCleanupCaches(): void {

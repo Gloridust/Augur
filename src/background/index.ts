@@ -413,6 +413,9 @@ const STALE_KEYS = [
   'model:recommend:forest:v1', // forest feature shape changed (v1 → v2)
   'model:recommend:forest:v2', // v3: newest-window training on cleaned data
   'model:recommend:mlp:v1', // v2: retrained alongside recommend v10
+  'model:recommend:v10', // v11: log-scaled inputs, recency prior, lr 0.001, pool negatives
+  'model:recommend:forest:v3', // v4: pool negatives, point-in-time features
+  'model:recommend:mlp:v2', // v3: log-scaled inputs
   'transition:v1', // v2: was never trained past random init
 ];
 

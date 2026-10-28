@@ -31,12 +31,12 @@ const KV_CLEANUP_MODEL = 'model:cleanup:v5'; // v5: outcome labels (refocused vs
 // multiplicative bandit blend is gone — the bandit is a learned feature
 // now. Bumping resets the Adam/weight state so the new objective trains
 // clean; auto-warmup re-fits from the existing event log on update.
-const KV_RECOMMEND_MODEL = 'model:recommend:v10'; // v10: isCurrentlyOpen leak removed; trained on de-duplicated, arrival-based data
+const KV_RECOMMEND_MODEL = 'model:recommend:v11'; // v11: log-scaled inputs, recency prior, lr 0.001, pool negatives, point-in-time training
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
-const KV_RECOMMEND_FOREST = 'model:recommend:forest:v3'; // v3: newest-window training on cleaned data
+const KV_RECOMMEND_FOREST = 'model:recommend:forest:v4'; // v4: log-scaled inputs, pool negatives, point-in-time features
 const KV_EVAL_HISTORY = 'evalHistory:v1';
 const KV_TRANSITION = 'transition:v2'; // v2: trained on every tab switch (v1 never left random init)
-const KV_MLP = 'model:recommend:mlp:v2';
+const KV_MLP = 'model:recommend:mlp:v3'; // v3: log-scaled inputs
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';
 const KV_RECOMMEND_BANDIT = 'bandit:recommend:v1';
 const KV_EMBEDDING = 'embedding:v1';
@@ -66,12 +66,21 @@ export async function saveCleanupModel(model: OnlineLogReg): Promise<void> {
   await saveKV(KV_CLEANUP_MODEL, model.serialize());
 }
 
-export async function loadRecommendModel(featureCount: number): Promise<OnlineLogReg> {
+// lr 0.001, not 0.01: Adam moves every weight ~lr per step whatever its
+// gradient, so on a few hundred switches the 28 weakly-informative weights
+// random-walked to ±0.5 and drowned the prior (leak-free backtest on the July
+// 2026 data: MRR 0.11 at 0.01, 0.18 at 0.001, 0.18 for the untrained prior).
+export function freshRecommendModel(featureCount: number, priorWeights?: number[]): OnlineLogReg {
+  const m = new OnlineLogReg(featureCount, { lr: 0.001, l2: 1e-4, l1: 1e-5 });
+  m.setPriorRate(0.25);
+  if (priorWeights) m.setPriorWeights(priorWeights);
+  return m;
+}
+
+export async function loadRecommendModel(featureCount: number, priorWeights?: number[]): Promise<OnlineLogReg> {
   const raw = await loadKV<LogRegState>(KV_RECOMMEND_MODEL);
   if (raw && raw.weights.length === featureCount) return OnlineLogReg.load(raw);
-  const m = new OnlineLogReg(featureCount, { lr: 0.01, l2: 1e-4, l1: 1e-5 });
-  m.setPriorRate(0.25);
-  return m;
+  return freshRecommendModel(featureCount, priorWeights);
 }
 
 export async function saveRecommendModel(model: OnlineLogReg): Promise<void> {

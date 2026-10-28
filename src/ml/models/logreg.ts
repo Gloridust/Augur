@@ -313,6 +313,13 @@ export class OnlineLogReg {
     }
   }
 
+  // Initial (cold-start) weights — an informative prior in standardized
+  // feature space that the data then refines. No-op once trained.
+  setPriorWeights(w: number[]): void {
+    if (this.state.trainedSamples > 0 || w.length !== this.state.weights.length) return;
+    this.state.weights = [...w];
+  }
+
   // Initial (cold-start) bias toward the empirical positive rate.
   setPriorRate(rate: number): void {
     if (this.state.trainedSamples > 0) return;

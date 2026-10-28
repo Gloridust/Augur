@@ -11,12 +11,14 @@ import { getEmbedding } from './embedding-train';
 import type { TimeseriesSnapshot } from './timeseries';
 import {
   RECOMMEND_FEATURE_NAMES,
+  RECOMMEND_WEIGHT_PRIOR,
   summarizeOpenReason,
   vectorFromRecommend,
 } from './features';
 import {
   buildCandidateFeatures,
   makeFeatureContext,
+  type FeatureContext,
   type ModelBundle,
 } from './candidate-features';
 import { liveSource, servingSource, type AggregateSource } from './sources';
@@ -52,8 +54,19 @@ const CANDIDATE_POOL = 80;
 const POOL_CAP = 120; // ceiling after candidate-generator expansion (Phase 3.4)
 const MAX_SUGGESTIONS = 5;
 const COLD_START_FRECENCY_FLOOR = 5;
+// Negatives per implicit training group, drawn from the serving pool.
+const POOL_NEGATIVES = 8;
+const FOREST_FULL_SHARE_ROWS = 14_000;
 
-const modelCache = lazy<OnlineLogReg>(() => loadRecommendModel(FEATURE_COUNT));
+// The forest's say in the LR+forest blend grows with what it was fit on. A
+// fixed 50/50 blend let a forest fit on ~200 switches (two weeks of data)
+// pull the prior-anchored LR down (leak-free backtest MRR 0.18 → 0.16); it
+// reaches its full half-share at ~2000 switches (× 7 rows each).
+function forestShareOf(forest: RandomForest): number {
+  return 0.5 * Math.min(1, forest.state.trainedSamples / FOREST_FULL_SHARE_ROWS);
+}
+
+const modelCache = lazy<OnlineLogReg>(() => loadRecommendModel(FEATURE_COUNT, RECOMMEND_WEIGHT_PRIOR));
 const banditCache = lazy<BetaBandit>(() => loadBandit('recommend'));
 const seqCache = lazy<DomainSequenceMemory>(() => loadSequenceMemory());
 const forestCache = lazy<RandomForest>(() => loadRecommendForest());
@@ -282,6 +295,7 @@ export async function scoreDomains(
   const model = await getModel();
   const forest = await getForest();
   const forestReady = !!forest && forest.isReady(FEATURE_COUNT);
+  const share = forestReady ? forestShareOf(forest!) : 0;
   const fc = makeFeatureContext(
     {
       ts: now,
@@ -301,7 +315,7 @@ export async function scoreDomains(
       await buildCandidateFeatures(fc, d, source, m, { isPinnedSomewhere: pinnedSet.has(d) }),
     );
     const lr = model.predict(x);
-    out.set(d, forestReady ? 0.5 * lr + 0.5 * forest!.predict(x) : lr);
+    out.set(d, forestReady ? (1 - share) * lr + share * forest!.predict(x) : lr);
   }
   return out;
 }
@@ -320,6 +334,81 @@ function blankStat(domain: string): DomainStats {
     lastVisit: 0,
     updatedAt: 0,
   };
+}
+
+// The candidates the ranker chooses among at a moment — and therefore what
+// training must contrast the opened domain with. Serving, live training,
+// replay and the forest all draw from this one pool. (Training used to pit
+// the target against uniform-random domains plus the sequence model's top
+// guesses; the model learned that "the sequence model likes it" marks a
+// NEGATIVE and never practised the real choice — recent vs popular within
+// the pool — and on a leak-free backtest it lost to plain recency 2×.)
+//
+// strict: only domains with statistics at fc.ts, no cold-start top sites —
+// for offline and training use, where anything else would be a guess or a
+// future leak.
+export async function candidatePool(
+  fc: FeatureContext,
+  src: AggregateSource,
+  m: ModelBundle,
+  opts: { evaluation?: boolean } = {},
+): Promise<{ pool: DomainStats[]; isColdStart: boolean }> {
+  const strict = opts.evaluation ?? false;
+  const openSet = new Set(fc.openDomains);
+  // A domain already open in a tab is never suggested (the user would switch
+  // to it, not open it again), so it's excluded BEFORE taking the top-K — for
+  // a heavy tab user, most top-frecency domains are open.
+  const eligible = (d: string) => !!d && !d.startsWith('chrome') && !openSet.has(d) && d !== fc.focusedDomain;
+  const pool: DomainStats[] = (await src.topByFrecency(CANDIDATE_POOL + openSet.size + 1))
+    .filter((s) => eligible(s.domain))
+    .slice(0, CANDIDATE_POOL);
+  let isColdStart = false;
+  if (!strict && pool.length < COLD_START_FRECENCY_FLOOR) {
+    isColdStart = true;
+    const seen = new Set(pool.map((p) => p.domain));
+    for (const f of await topSitesPool()) {
+      if (eligible(f.domain) && !seen.has(f.domain)) {
+        pool.push(f);
+        seen.add(f.domain);
+      }
+    }
+  }
+
+  // Augmentation (Phase 3.4): frecency = "what you visit a lot"; add what
+  // you tend to open RIGHT NOW — sequence-memory transitions, embedding
+  // neighbours of the focused domain, factorized-transition top-next, and
+  // neighbours of the session centroid.
+  const poolDomains = new Set(pool.map((p) => p.domain));
+  const tryAdd = async (domain: string) => {
+    if (!eligible(domain) || poolDomains.has(domain) || pool.length >= POOL_CAP) return;
+    const stats = await src.stats(domain);
+    if (!stats && strict) return;
+    pool.push(stats ?? blankStat(domain));
+    poolDomains.add(domain);
+  };
+  for (const { domain } of m.seq.topPredictions(fc.focusHistory, fc.hour, fc.ts, 20)) {
+    await tryAdd(domain);
+  }
+  if (fc.focusedDomain) {
+    for (const { domain } of m.embedding.topNeighbors(fc.focusedDomain, 8)) await tryAdd(domain);
+    for (const domain of m.transition.topNext(fc.focusedDomain, 8, poolDomains)) await tryAdd(domain);
+  }
+  if (fc.session.vec) {
+    for (const domain of m.embedding.nearestToVector(fc.session.vec, 8, poolDomains)) {
+      await tryAdd(domain);
+    }
+  }
+  return { pool, isColdStart };
+}
+
+// k distinct members of `pool` other than `exclude`, uniformly.
+export function samplePoolNegatives(pool: DomainStats[], exclude: string, k: number): string[] {
+  const xs = pool.map((p) => p.domain).filter((d) => d !== exclude);
+  for (let i = 0; i < Math.min(k, xs.length); i++) {
+    const j = i + Math.floor(Math.random() * (xs.length - i));
+    [xs[i], xs[j]] = [xs[j], xs[i]];
+  }
+  return xs.slice(0, k);
 }
 
 // Full scoring path, shared by the live recommender and the offline
@@ -354,6 +443,7 @@ export async function scoreOpenCandidates(
   const forest =
     opts.forestOverride !== undefined ? opts.forestOverride : await getForest();
   const forestReady = !!forest && forest.isReady(FEATURE_COUNT);
+  const forestShare = forestReady ? forestShareOf(forest!) : 0;
   // Phase 5 MLP — live: only when enabled AND warm. Backtest: when the
   // evaluator passes a split-trained MLP (it does iff the user enabled it).
   const mlp =
@@ -366,7 +456,6 @@ export async function scoreOpenCandidates(
           : null;
   const useMlp = !!mlp && mlp.isReady(FEATURE_COUNT);
 
-  const openSet = new Set(context.openDomains);
   const pinnedSet = new Set(context.pinnedDomains ?? []);
   const focusHistory = context.focusHistory ?? [];
   const fc = makeFeatureContext(
@@ -382,53 +471,7 @@ export async function scoreOpenCandidates(
     m,
   );
 
-  // ── Candidate pool ────────────────────────────────────────────────
-  // A domain already open in a tab is never suggested (the user would switch
-  // to it, not open it again), so it's excluded BEFORE taking the top-K — for
-  // a heavy tab user, most top-frecency domains are open, and the old pool
-  // spent most of its 80 slots on candidates it then threw away.
-  const eligible = (d: string) => !!d && !d.startsWith('chrome') && !openSet.has(d);
-  const pool: DomainStats[] = (await src.topByFrecency(CANDIDATE_POOL + openSet.size))
-    .filter((s) => eligible(s.domain))
-    .slice(0, CANDIDATE_POOL);
-  let isColdStart = false;
-  if (!evaluation && pool.length < COLD_START_FRECENCY_FLOOR) {
-    isColdStart = true;
-    const seen = new Set(pool.map((p) => p.domain));
-    for (const f of await topSitesPool()) {
-      if (eligible(f.domain) && !seen.has(f.domain)) {
-        pool.push(f);
-        seen.add(f.domain);
-      }
-    }
-  }
-
-  // ── Candidate-pool augmentation (Phase 3.4) ───────────────────────
-  // Frecency = "what you visit a lot". Add what you tend to open RIGHT NOW:
-  // sequence-memory transitions, embedding neighbours of the focused domain,
-  // factorized-transition top-next, and neighbours of the session centroid.
-  const poolDomains = new Set(pool.map((p) => p.domain));
-  const tryAdd = async (domain: string) => {
-    if (!eligible(domain) || poolDomains.has(domain) || pool.length >= POOL_CAP) return;
-    const stats = await src!.stats(domain);
-    // Offline, the embedding is today's and knows domains first visited
-    // after the evaluated moment; admitting them would leak the future.
-    if (!stats && evaluation) return;
-    pool.push(stats ?? blankStat(domain));
-    poolDomains.add(domain);
-  };
-  for (const { domain } of m.seq.topPredictions(focusHistory, fc.hour, now, 20)) {
-    await tryAdd(domain);
-  }
-  if (fc.focusedDomain) {
-    for (const { domain } of m.embedding.topNeighbors(fc.focusedDomain, 8)) await tryAdd(domain);
-    for (const domain of m.transition.topNext(fc.focusedDomain, 8, poolDomains)) await tryAdd(domain);
-  }
-  if (fc.session.vec) {
-    for (const domain of m.embedding.nearestToVector(fc.session.vec, 8, poolDomains)) {
-      await tryAdd(domain);
-    }
-  }
+  const { pool, isColdStart } = await candidatePool(fc, src, m, { evaluation });
 
   const candidates: OpenCandidate[] = [];
   for (let i = 0; i < pool.length; i++) {
@@ -442,9 +485,10 @@ export async function scoreOpenCandidates(
     // (banditLogit) inside the models — no hard-coded multiplier.
     let score: number;
     if (useMlp && forestReady) {
-      score = 0.4 * lrScore + 0.35 * forest!.predict(xVec) + 0.25 * mlp!.predict(xVec);
+      const f = 0.35 * forestShare;
+      score = (0.75 - f) * lrScore + f * forest!.predict(xVec) + 0.25 * mlp!.predict(xVec);
     } else if (forestReady) {
-      score = 0.5 * lrScore + 0.5 * forest!.predict(xVec);
+      score = (1 - forestShare) * lrScore + forestShare * forest!.predict(xVec);
     } else {
       score = lrScore;
     }
@@ -597,36 +641,20 @@ export async function trainImplicitOpen(
     m,
   );
 
-  // ── Mixture negative sampling: 3 easy + 2 hard ─────────────────────
-  // Serving never ranks a domain that's already open in a tab, so neither
-  // does training: open domains are excluded from the negatives.
-  const EASY_NEG_COUNT = 3;
-  const HARD_NEG_COUNT = 2;
-  const exclude = new Set<string>([event.domain, ...openDomains]);
-  if (focusedDomain) exclude.add(focusedDomain);
-
-  const hardCandidates = m.seq
-    .topPredictions(focusHistory, fc.hour, event.ts, 10)
-    .map((p) => p.domain)
-    .filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'))
-    .slice(0, HARD_NEG_COUNT);
-  for (const d of hardCandidates) exclude.add(d);
-
-  const easyTarget = EASY_NEG_COUNT + (HARD_NEG_COUNT - hardCandidates.length);
-  const easyPool = (await src.domains()).filter((d) => d && !exclude.has(d) && !d.startsWith('chrome'));
-  const easySampled: string[] = [];
-  for (let i = 0; i < Math.min(easyTarget, easyPool.length); i++) {
-    const j = i + Math.floor(Math.random() * (easyPool.length - i));
-    [easyPool[i], easyPool[j]] = [easyPool[j], easyPool[i]];
-    easySampled.push(easyPool[i]);
-  }
+  // ── Negatives: sampled from the serving candidate pool ──────────────
+  // The model is trained to make the choice it is asked to make at serve
+  // time — the opened domain against the other candidates the pool held at
+  // that moment (open and focused domains are never in it).
+  const { pool } = await candidatePool(fc, src, m, { evaluation: true });
+  const negDomains = samplePoolNegatives(pool, event.domain, POOL_NEGATIVES);
+  // A ranking step needs something to rank against.
+  if (negDomains.length === 0) return false;
 
   // ── Phase 2.1: build the group and take one softmax-CE ranking step ─
   // isCurrentlyOpen is 0 for every member: it used to be hard-coded TRUE for
   // the positive (the just-opened tab makes its own domain "open") — a target
   // leak that grew to the 2nd-largest weight. At serve time it's always 0
   // (open domains are skipped), so 0 is the only consistent value.
-  const negDomains = [...hardCandidates, ...easySampled];
   const group: Array<{ x: number[]; positive: boolean }> = [];
   for (const [domain, positive] of [[event.domain, true] as const, ...negDomains.map((d) => [d, false] as const)]) {
     const f = await buildCandidateFeatures(fc, domain, src, m);
