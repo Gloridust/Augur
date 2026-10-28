@@ -313,6 +313,12 @@ npm run package      # build + zip dist into augur-<version>.zip
 npm test             # vitest: SW pipeline, data layer, point-in-time parity, backup
 ```
 
+Run the real dashboard + the real service-worker module in an ordinary page (chrome mock, synthetic browsing, the browser's own IndexedDB; `?reset` reseeds) · 在普通网页里运行真实的仪表板和 SW 代码（chrome 模拟、合成浏览数据，`?reset` 重新生成）:
+
+```bash
+npm run harness
+```
+
 Validate the models on a real backup (read locally, seeded, nothing is written back) · 用真实备份验证模型（本地读取、固定随机种子、不回写）:
 
 ```bash

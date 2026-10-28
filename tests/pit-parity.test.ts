@@ -106,6 +106,14 @@ describe('point-in-time correctness', () => {
 });
 
 describe('evaluator', () => {
+  it('exact McNemar matches the binomial tail', async () => {
+    const { mcnemarExact } = await import('../src/ml/eval');
+    expect(mcnemarExact(0, 0)).toBe(1);
+    expect(mcnemarExact(5, 5)).toBe(1);
+    expect(mcnemarExact(12, 0)).toBeCloseTo(2 / 4096, 10); // 2·0.5^12
+    expect(mcnemarExact(9, 1)).toBeCloseTo((2 * 11) / 1024, 10); // 2·(1+10)/2^10
+  });
+
   it('runs replay and backtest on point-in-time features and reports Wilson intervals', async () => {
     const w = await freshWorld();
     const { evaluateRecommend } = await import('../src/ml/eval');

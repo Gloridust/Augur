@@ -127,5 +127,8 @@ describe('replay trainer', () => {
     const r = await replayImplicitTraining();
     expect(r.openSamples).toBeGreaterThanOrEqual(1); // b.com and/or c.com opens
     expect(r.cleanupSamples).toBe(2); // tab 1 refocused, tab 3 closed
+    expect(r.cleanupClosed).toBe(1); // tab 3; x.com closed after 1 min is below the 30-min idle gate
+    // a.com, b.com and c.com each opened with a non-open domain (x.com) to rank against.
+    expect(r.openSamples).toBe(3);
   });
 });

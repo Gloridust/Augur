@@ -369,6 +369,7 @@ This goes through the bandit, not the LR, because LR features describe the *cont
 
 - **Backtest** — fresh LR (+ MLP if enabled) and forest trained only on switches before the split (7 days before the newest event), bandit empty; scored on the switches after it. The honest generalization number.
 - **Replay** — today's trained scorer on the newest points. It has trained on them, so use it for before/after deltas only.
+- **Paired test** — on the same points, how many only the model got right vs only the baseline, with an exact McNemar p-value. Two overlapping Wilson intervals can't say whether the model beats frecency; this can. July 2026 trace, 3 seeds × splits of 7 and 10 days: hit@1 model-only 12–13 vs baseline-only 0, hit@3 20–22 vs 2–3, **p ≤ 0.0005** in every run.
 - **Breakdown** — per kind of open (`typed` in a new tab — the new-tab-page moment; `link` — new tab from a link; `inTab` — link followed in place) and the count of **novel** targets (never visited before the point: unreachable for any ranker, so `1 − novel/n` is the ceiling).
 
 Real-data check, opt-in and seeded so it repeats: `AUGUR_BACKUP=… npx vitest run tests/real-data.test.ts` imports a backup into a fake database, re-runs the warm-up chain and prints both reports.

@@ -216,8 +216,15 @@ export async function writeDumpToDb(raw: unknown, opts: { merge?: boolean } = {}
 
 // ── Files ────────────────────────────────────────────────────────────────
 
+// Local calendar date/time — the user's "today", not UTC's.
+function localStamp(d: Date, withTime: boolean): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return withTime ? `${date}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}` : date;
+}
+
 export function backupFilename(now = new Date()): string {
-  return `augur-backup-${now.toISOString().slice(0, 10)}.json.gz`;
+  return `augur-backup-${localStamp(now, false)}.json.gz`;
 }
 
 // Backup file = gzip(JSON(DataDump)). Plain .json backups from older
@@ -359,6 +366,6 @@ export async function buildDebugBundle(
     ],
     new Date(exportedAt),
   );
-  const stamp = new Date(exportedAt).toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const stamp = localStamp(new Date(exportedAt), true);
   return { filename: `augur-debug-${stamp}.zip`, bytes };
 }

@@ -46,6 +46,9 @@ it.skipIf(!file)('real backup: warm-up + leak-free evaluation', async () => {
       `${mode} [${e.ensemble}] n=${e.evaluated} novel=${e.novel} in-pool=${pct(e.model.recallAtPool)}\n` +
         `  model    hit@1 ${pct(e.model.hit1)} (${e.ci.hit1.map(pct).join('–')})  hit@3 ${pct(e.model.hit3)}  hit@5 ${pct(e.model.hit5)}  MRR ${e.model.mrr.toFixed(3)}\n` +
         `  baseline hit@1 ${pct(e.baseline.hit1)}  hit@3 ${pct(e.baseline.hit3)}  hit@5 ${pct(e.baseline.hit5)}  MRR ${e.baseline.mrr.toFixed(3)}\n` +
+        (['hit1', 'hit3'] as const)
+          .map((k) => `  paired ${k}: model-only ${e.vsBaseline[k].modelOnly}, baseline-only ${e.vsBaseline[k].baselineOnly}, McNemar p=${e.vsBaseline[k].p.toPrecision(2)}`)
+          .join('\n') + '\n' +
         Object.entries(e.byKind)
           .map(([k, v]) => `  ${k.padEnd(6)} n=${v.n} hit@1 ${pct(v.hit1)} hit@3 ${pct(v.hit3)} (baseline ${pct(v.baselineHit3)})`)
           .join('\n'),

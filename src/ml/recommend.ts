@@ -177,36 +177,39 @@ function banditArmId(domain: string): string {
 
 async function topSitesPool(): Promise<DomainStats[]> {
   if (!chrome?.topSites?.get) return [];
-  return new Promise((resolve) => {
-    try {
-      chrome.topSites.get((sites) => {
-        const now = Date.now();
-        const seen = new Set<string>();
-        const out: DomainStats[] = [];
-        for (const s of sites ?? []) {
-          const domain = extractDomain(s.url);
-          if (!domain || seen.has(domain)) continue;
-          seen.add(domain);
-          out.push({
-            domain,
-            visitCount: 1,
-            visitsDecay: 0.5,
-            totalFocusMs: 0,
-            avgFocusMs: 0,
-            closeWithoutFocusCount: 0,
-            closeQuickCount: 0,
-            hourDist: new Array(24).fill(0),
-            dowDist: new Array(7).fill(0),
-            lastVisit: now,
-            updatedAt: now,
-          });
-        }
-        resolve(out);
-      });
-    } catch {
-      resolve([]);
-    }
-  });
+  // Cold start only, and never allowed to stall a recommendation: a
+  // topSites call that doesn't settle used to hang recommend.open forever.
+  let sites: chrome.topSites.MostVisitedURL[] = [];
+  try {
+    sites = await Promise.race([
+      chrome.topSites.get(),
+      new Promise<chrome.topSites.MostVisitedURL[]>((resolve) => setTimeout(() => resolve([]), 500)),
+    ]);
+  } catch {
+    return [];
+  }
+  const now = Date.now();
+  const seen = new Set<string>();
+  const out: DomainStats[] = [];
+  for (const s of sites ?? []) {
+    const domain = extractDomain(s.url);
+    if (!domain || seen.has(domain)) continue;
+    seen.add(domain);
+    out.push({
+      domain,
+      visitCount: 1,
+      visitsDecay: 0.5,
+      totalFocusMs: 0,
+      avgFocusMs: 0,
+      closeWithoutFocusCount: 0,
+      closeQuickCount: 0,
+      hourDist: new Array(24).fill(0),
+      dowDist: new Array(7).fill(0),
+      lastVisit: now,
+      updatedAt: now,
+    });
+  }
+  return out;
 }
 
 async function lastEventForDomain(

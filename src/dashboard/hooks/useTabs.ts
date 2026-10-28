@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { extractDomain } from '../../shared/db';
 import type { DomainGroup, WindowGroup } from '../../shared/types';
 import { onTabActivity } from '../liveRefresh';
@@ -32,33 +32,56 @@ export function dashboardUrl(): string {
   return '';
 }
 
-export function useTabs(): UseTabsResult {
-  const [tabs, setTabs] = useState<chrome.tabs.Tab[]>([]);
+// One tab list per page, shared by every consumer (tab wall, workspaces):
+// one chrome.tabs listener set and one query per burst of tab events, however
+// many components read it. Subscribes while anyone is mounted.
+const tabStore = (() => {
+  let tabs: chrome.tabs.Tab[] = [];
+  const subscribers = new Set<() => void>();
+  let unsubscribeChrome: (() => void) | null = null;
 
-  const refresh = useMemo(
-    () => () => {
-      if (!chrome?.tabs?.query) return;
-      chrome.tabs.query({}, (result) => {
-        // Hide the dashboard itself from the tab wall — it's the surface
-        // the user is currently looking at, listing it just creates a
-        // "wait, why can't I close that?" dead end.
-        setTabs(result.filter((t) => !isDashboardTab(t)));
-      });
-    },
-    [],
-  );
-
-  useEffect(() => {
-    refresh();
-    if (!chrome?.tabs) return;
-    // Tab events arrive in bursts (a page load is several onUpdated calls,
-    // closing a window is one onRemoved per tab): coalesce them into one
-    // query, and skip entirely while this dashboard is in a background tab.
-    return onTabActivity(refresh, {
-      events: ['created', 'removed', 'updated', 'moved', 'activated', 'attached', 'detached'],
-      delayMs: 150,
+  const refresh = () => {
+    if (!chrome?.tabs?.query) return;
+    chrome.tabs.query({}, (result) => {
+      // Hide the dashboard itself from the tab wall — it's the surface the
+      // user is currently looking at; listing it is a "why can't I close
+      // that?" dead end.
+      tabs = result.filter((t) => !isDashboardTab(t));
+      subscribers.forEach((fn) => fn());
     });
-  }, [refresh]);
+  };
+
+  return {
+    refresh,
+    get: () => tabs,
+    subscribe(fn: () => void): () => void {
+      subscribers.add(fn);
+      if (subscribers.size === 1) {
+        refresh();
+        // Tab events arrive in bursts (a page load is several onUpdated
+        // calls, closing a window one onRemoved per tab): coalesce them, and
+        // skip entirely while this dashboard is in a background tab.
+        unsubscribeChrome = chrome?.tabs
+          ? onTabActivity(refresh, {
+              events: ['created', 'removed', 'updated', 'moved', 'activated', 'attached', 'detached'],
+              delayMs: 150,
+            })
+          : null;
+      }
+      return () => {
+        subscribers.delete(fn);
+        if (subscribers.size === 0) {
+          unsubscribeChrome?.();
+          unsubscribeChrome = null;
+        }
+      };
+    },
+  };
+})();
+
+export function useTabs(): UseTabsResult {
+  const tabs = useSyncExternalStore(tabStore.subscribe, tabStore.get);
+  const refresh = tabStore.refresh;
 
   const groups = useMemo<DomainGroup[]>(() => {
     const buckets = new Map<string, chrome.tabs.Tab[]>();

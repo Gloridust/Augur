@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
@@ -96,7 +96,7 @@ export function Insights() {
                 </Typography>
               ))}
               {dayLabels.map((label, dow) => (
-                <>
+                <Fragment key={label}>
                   <Typography
                     key={`l-${dow}`}
                     variant="caption"
@@ -117,7 +117,7 @@ export function Insights() {
                       }}
                     />
                   ))}
-                </>
+                </Fragment>
               ))}
             </Box>
           </Box>

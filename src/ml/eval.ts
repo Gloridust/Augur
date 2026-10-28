@@ -76,6 +76,9 @@ export interface EvalReport {
   byKind: Record<PointKind, { n: number; hit1: number; hit3: number; baselineHit3: number }>;
   // Targets never visited before their point (unreachable for any ranker).
   novel: number;
+  // Paired comparison with the baseline on the same points: how many only
+  // the model / only the baseline got right, and the exact McNemar p-value.
+  vsBaseline: Record<'hit1' | 'hit3', { modelOnly: number; baselineOnly: number; p: number }>;
   tookMs: number;
 }
 
@@ -92,6 +95,23 @@ function record(acc: ReturnType<typeof emptyAcc>, rank: number, inPool: boolean)
   if (rank <= 5) acc.hits5 += 1;
   if (Number.isFinite(rank)) acc.rrSum += 1 / rank;
   if (inPool) acc.inPool += 1;
+}
+
+// Exact two-sided McNemar test on paired outcomes: b = points only the model
+// got right, c = points only the baseline got right. Under H0 each discordant
+// point is a fair coin. Answers "is the model really better than frecency on
+// THESE points", which two overlapping Wilson intervals can't.
+export function mcnemarExact(b: number, c: number): number {
+  const n = b + c;
+  if (n === 0) return 1;
+  const k = Math.min(b, c);
+  let logC = 0; // log C(n, 0)
+  let tail = 0;
+  for (let i = 0; i <= k; i++) {
+    if (i > 0) logC += Math.log(n - i + 1) - Math.log(i);
+    tail += Math.exp(logC - n * Math.LN2);
+  }
+  return Math.min(1, 2 * tail);
 }
 
 export function wilson(k: number, n: number, z = 1.96): Interval {
@@ -162,6 +182,7 @@ export async function evaluateRecommend(opts: {
   };
   let novel = 0;
   let evaluated = 0;
+  const paired = { hit1: { m: 0, b: 0 }, hit3: { m: 0, b: 0 } };
 
   await walkEvents(events, pit, async (e, point) => {
     if (!point) return;
@@ -222,6 +243,12 @@ export async function evaluateRecommend(opts: {
     if (idx === 0) k.h1 += 1;
     if (idx >= 0 && idx < 3) k.h3 += 1;
     if (bIdx >= 0 && bIdx < 3) k.b3 += 1;
+    for (const [key, cut] of [['hit1', 1], ['hit3', 3]] as const) {
+      const mHit = idx >= 0 && idx < cut;
+      const bHit = bIdx >= 0 && bIdx < cut;
+      if (mHit && !bHit) paired[key].m += 1;
+      if (bHit && !mHit) paired[key].b += 1;
+    }
     if (!((await src.stats(target))?.visitCount)) novel += 1;
     evaluated += 1;
   });
@@ -262,6 +289,10 @@ export async function evaluateRecommend(opts: {
       ]),
     ) as EvalReport['byKind'],
     novel,
+    vsBaseline: {
+      hit1: { modelOnly: paired.hit1.m, baselineOnly: paired.hit1.b, p: mcnemarExact(paired.hit1.m, paired.hit1.b) },
+      hit3: { modelOnly: paired.hit3.m, baselineOnly: paired.hit3.b, p: mcnemarExact(paired.hit3.m, paired.hit3.b) },
+    },
     tookMs: Date.now() - t0,
   };
 
