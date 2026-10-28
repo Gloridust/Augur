@@ -370,7 +370,9 @@ This goes through the bandit, not the LR, because LR features describe the *cont
 - **Backtest** — fresh LR (+ MLP if enabled) and forest trained only on switches before the split (7 days before the newest event), bandit empty; scored on the switches after it. The honest generalization number.
 - **Replay** — today's trained scorer on the newest points. It has trained on them, so use it for before/after deltas only.
 - **Prequential backtest** — after scoring a test point the split-trained LR learns from it, as the live SW does, so the number is what the deployed model would have scored. (Freezing at the split made a fast learning rate look harmless; online it cost 0.015 MRR, which is why Head A runs at lr 0.0003 with regularization centred on its prior.)
-- **Reachable** — hit rates over targets that had been visited before. July 2026 trace: **hit@1 19.4%, hit@3 ≈ 41%** vs frecency 14.9% — the overall 10.8% / 23% is diluted by the 44% first-ever visits no ranker can get.
+- **Reachable** — hit rates over targets that had been visited before (the 35–44% first-ever visits are unreachable for any ranker).
+
+Largest sample available (backup of 2026-07-28, 46 days, all 217 switch points scored prequentially): **hit@1 8.6%, hit@3 19.6%, MRR 0.165** overall; on reachable targets (n=141) **hit@1 13%, hit@3 30%** vs frecency 0% / 6.9% / 0.070 and 10.6% reachable hit@3; paired McNemar p ≈ 10⁻⁵. (The 7-day split, n=120 / 67 reachable, reads higher — hit@3 23% / 41% — and is the noisier estimate.)
 - **Paired test** — on the same points, how many only the model got right vs only the baseline, with an exact McNemar p-value. Two overlapping Wilson intervals can't say whether the model beats frecency; this can. July 2026 trace, 3 seeds × splits of 7 and 10 days: hit@1 model-only 12–13 vs baseline-only 0, hit@3 20–22 vs 2–3, **p ≤ 0.0005** in every run.
 - **Breakdown** — per kind of open (`typed` in a new tab — the new-tab-page moment; `link` — new tab from a link; `inTab` — link followed in place) and the count of **novel** targets (never visited before the point: unreachable for any ranker, so `1 − novel/n` is the ceiling).
 
