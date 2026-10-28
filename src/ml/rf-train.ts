@@ -10,19 +10,19 @@
 // can't and gives a stable second opinion.
 
 import { db } from '../shared/db';
-import type { TabEvent } from '../shared/types';
+import type { TabEvent, TabRuntimeState } from '../shared/types';
 import { getDomainStats } from './aggregate';
 import { dinAttention } from './attention';
 import { getEmbedding } from './embedding-train';
 import {
-  buildCleanupFeatures,
   buildRecommendFeatures,
   buildSessionVector,
   RECOMMEND_FEATURE_NAMES,
   vectorFromRecommend,
 } from './features';
-import { trainImplicitOpen } from './recommend';
-import { trainImplicitCleanup } from './cleanup';
+import { clearSequenceMemoryCache, trainImplicitOpen } from './recommend';
+import { discardDirty } from './flush';
+import { outcomeFeatures, trainCleanupOutcome } from './cleanup';
 import { sessionContext, visitVelocity } from './timeseries';
 import { DomainSequenceMemory } from './models/markov';
 import { RandomForest } from './models/randomforest';
@@ -85,17 +85,28 @@ function dwellAfter(
 // at each point in time. For each open/navigate event, emit (positive
 // features, label=1) for the opened domain plus N random negatives sampled
 // from currently-popular domains.
-export async function trainRecommendForest(): Promise<{
+export async function trainRecommendForest(
+  // endTs: train only on events before this instant (the backtest uses the
+  // split point so the forest never sees test-period events).
+  // persist=false: return the forest without overwriting the live one.
+  opts: { endTs?: number; persist?: boolean } = {},
+): Promise<{
   trained: number;
   posSamples: number;
   negSamples: number;
+  forest?: RandomForest;
 }> {
-  const cutoff = Date.now() - POSITIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const endTs = opts.endTs ?? Date.now();
+  const persist = opts.persist ?? true;
+  const cutoff = endTs - POSITIVE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
   // Pull only trackable open/navigate events (skip 'history-bootstrap' synthetic
-  // ones — they have no real focus context).
+  // ones — they have no real focus context). NEWEST-first: the old code took
+  // the first MAX_EVENTS in ascending order, i.e. the oldest 1500 events of
+  // the 30-day window, so a busy user's forest never saw their recent weeks.
   const events = await db.events
     .where('ts')
-    .between(cutoff, Date.now(), true, true)
+    .between(cutoff, endTs, true, false)
+    .reverse()
     .toArray();
 
   const usable: TabEvent[] = [];
@@ -107,6 +118,7 @@ export async function trainRecommendForest(): Promise<{
     usable.push(e);
     if (usable.length >= MAX_EVENTS) break;
   }
+  usable.reverse(); // back to chronological for the context walk
   if (usable.length === 0) {
     return { trained: 0, posSamples: 0, negSamples: 0 };
   }
@@ -282,8 +294,8 @@ export async function trainRecommendForest(): Promise<{
     seed: Math.floor(Date.now() / 1000),
     weights: W,
   });
-  await saveRecommendForest(forest);
-  return { trained: X.length, posSamples: positives, negSamples: negatives };
+  if (persist) await saveRecommendForest(forest);
+  return { trained: X.length, posSamples: positives, negSamples: negatives, forest };
 }
 
 // Rebuild the sequence-memory bigram / trigram / time-bigram tables from
@@ -299,12 +311,15 @@ export async function rebuildSequenceMemory(): Promise<{
   observed: number;
   bigramKeys: number;
 }> {
-  const events = await db.events.orderBy('ts').toArray();
+  // Only focus events, straight off the [type+ts] index.
+  const events = await db.events
+    .where('[type+ts]')
+    .between(['focus', 0], ['focus', Date.now()], true, true)
+    .toArray();
   const seq = new DomainSequenceMemory();
   const history: string[] = [];
   let observed = 0;
   for (const e of events) {
-    if (e.type !== 'focus') continue;
     if (!e.domain) continue;
     if (e.tabId === undefined) continue; // skip synthetic / non-tab events
     // Dedupe consecutive same-domain focuses to mirror the live SW path.
@@ -317,7 +332,12 @@ export async function rebuildSequenceMemory(): Promise<{
     history.push(e.domain);
     if (history.length > 8) history.shift();
   }
+  // Replace the live table: drop any pending write of the old in-memory copy
+  // and the cache itself, or the next tab switch would save the stale table
+  // straight back over this rebuild.
+  discardDirty('recommend.sequence');
   await saveSequenceMemory(seq);
+  clearSequenceMemoryCache();
   return { observed, bigramKeys: Object.keys(seq.state.bigram).length };
 }
 
@@ -342,23 +362,20 @@ export async function replayImplicitTraining(): Promise<{
   openSamples: number;
   cleanupSamples: number;
 }> {
-  // (trainImplicitOpen / trainImplicitCleanup / buildCleanupFeatures are now
-  // STATIC imports. They were lazy `await import()` calls out of a circular-
-  // dep worry that doesn't actually exist — neither recommend nor cleanup
-  // imports rf-train — and the dynamic import risked the same SW
-  // "document is not defined" failure. The symbols are only used at runtime
-  // inside this function, so even a cycle would be safe.)
-  const events = await db.events.orderBy('ts').toArray();
-  const recent = events.slice(-REPLAY_CAP);
+  // Bounded read: only the newest REPLAY_CAP events (the old code loaded the
+  // entire, ever-growing events table and sliced it in memory).
+  const recent = (await db.events.orderBy('ts').reverse().limit(REPLAY_CAP).toArray()).reverse();
   const dwellIdx = buildDwellIndex(recent);
+  const statsByDomain = new Map((await db.domains.toArray()).map((s) => [s.domain, s]));
+  const closeBursts = windowCloseBursts(recent);
 
-  // Maintain rolling focus history so trainImplicitOpen sees realistic
-  // context at each replay step.
+  // Rolling focus history so trainImplicitOpen sees realistic context.
   const history: string[] = [];
-  const openTabIds = new Set<number>();
   const recentFocus: Array<{ domain: string; ts: number }> = [];
   let sessionStartTs = recent[0]?.ts ?? Date.now();
   let lastEventTs = sessionStartTs;
+  // Per-tab state reconstructed from the log, for cleanup outcome labels.
+  const tabs = new Map<number, TabRuntimeState>();
 
   let openCount = 0;
   let cleanupCount = 0;
@@ -366,12 +383,63 @@ export async function replayImplicitTraining(): Promise<{
   for (const e of recent) {
     if (e.ts - lastEventTs > SESSION_GAP_MS) sessionStartTs = e.ts;
     lastEventTs = e.ts;
-    if (e.tabId !== undefined && (e.type === 'open' || e.type === 'navigate')) {
-      openTabIds.add(e.tabId);
+    const tid = e.tabId;
+
+    // ── Cleanup outcomes (refocused vs closed-while-backgrounded) ─────
+    if (tid !== undefined && e.domain && e.url) {
+      let st = tabs.get(tid);
+      if (!st && (e.type === 'open' || e.type === 'navigate' || e.type === 'focus')) {
+        st = {
+          tabId: tid,
+          url: e.url,
+          domain: e.domain,
+          title: e.title,
+          openedAt: e.ts,
+          focusMs: 0,
+          focusCount: 0,
+          pinned: false,
+          groupId: -1,
+        };
+        tabs.set(tid, st);
+      }
+      if (st) {
+        if (e.type === 'navigate') {
+          st.url = e.url;
+          st.domain = e.domain;
+          st.title = e.title ?? st.title;
+        } else if (e.type === 'focus') {
+          // Switching (from another tab) to a backgrounded or never-viewed
+          // tab — same rule as the live path in startFocusSegment. The
+          // ≥30-min idle gate lives in trainCleanupOutcome.
+          if (st.focusedAt === undefined && e.prevTabId !== undefined && e.prevTabId !== tid) {
+            await trainCleanupOutcome({
+              features: outcomeFeatures(st, statsByDomain.get(st.domain), e.ts),
+              outcome: 'refocused',
+            });
+            cleanupCount += 1;
+          }
+          st.focusedAt = e.ts;
+          st.focusCount += 1;
+        } else if (e.type === 'blur' && st.focusedAt !== undefined) {
+          st.focusMs += e.focusMs ?? Math.max(0, e.ts - st.focusedAt);
+          st.focusedAt = undefined;
+          st.lastFocusedAt = e.ts;
+        } else if (e.type === 'close') {
+          const windowClosing =
+            (e.meta as Record<string, unknown> | undefined)?.windowClosing === true ||
+            closeBursts.has(e.ts);
+          if (st.focusedAt === undefined && !windowClosing) {
+            await trainCleanupOutcome({
+              features: outcomeFeatures(st, statsByDomain.get(st.domain), e.ts),
+              outcome: 'closed',
+            });
+            cleanupCount += 1;
+          }
+          tabs.delete(tid);
+        }
+      }
     }
-    if (e.tabId !== undefined && e.type === 'close') {
-      openTabIds.delete(e.tabId);
-    }
+
     if (e.type === 'focus' && e.domain) {
       if (history.length === 0 || history[history.length - 1] !== e.domain) {
         history.push(e.domain);
@@ -379,72 +447,43 @@ export async function replayImplicitTraining(): Promise<{
       }
       recentFocus.push({ domain: e.domain, ts: e.ts });
     }
-    if (
-      (e.type === 'open' || e.type === 'navigate') &&
-      e.domain &&
-      e.tabId !== undefined
-    ) {
+    if ((e.type === 'open' || e.type === 'navigate') && e.domain && tid !== undefined) {
       const meta = e.meta as Record<string, unknown> | undefined;
       if (meta?.source === 'history-bootstrap') continue;
-      const focusedDomain =
-        history.length > 0 ? history[history.length - 1] : undefined;
+      const focusedDomain = history.length > 0 ? history[history.length - 1] : undefined;
       while (recentFocus.length && e.ts - recentFocus[0].ts > RECENT_FOCUS_MS) {
         recentFocus.shift();
       }
-      // trainImplicitOpen applies the switch filter itself; we just supply
-      // the context it needs (recently-focused set, session start, and the
-      // engagement×intent weight computed from the forward dwell join).
-      await trainImplicitOpen(e, {
+      // trainImplicitOpen applies the switch filter itself and reports
+      // whether this event actually produced a training group.
+      const trained = await trainImplicitOpen(e, {
         focusHistory: [...history],
         focusedDomain,
         openDomains: history,
         recentlyFocusedDomains: recentFocus.map((r) => r.domain),
         sessionStartTs,
-        sampleWeight: sampleWeight(dwellAfter(dwellIdx, e.tabId, e.ts), e.openedFrom),
+        sampleWeight: sampleWeight(dwellAfter(dwellIdx, tid, e.ts), e.openedFrom),
       });
-      if (e.domain) recentFocus.push({ domain: e.domain, ts: e.ts });
-      openCount += 1;
-    }
-    if (e.type === 'close' && e.domain && e.url) {
-      // Synthesize a CleanupFeatures snapshot from the closed event's
-      // recorded fields. We don't have all the per-tab state, but
-      // trainImplicitCleanup just needs `focusRate`, `tabAgeMs`,
-      // `timeSinceFocusMs`, `focusCount` — which are derivable.
-      const tabAgeMs = e.durationMs ?? 0;
-      const focusMs = e.focusMs ?? 0;
-      const focusCount = e.focusCount ?? 0;
-      const features = buildCleanupFeatures({
-        tab: {
-          id: e.tabId,
-          url: e.url,
-          title: e.title,
-          pinned: false,
-          active: false,
-          groupId: -1,
-        } as chrome.tabs.Tab,
-        state: {
-          tabId: e.tabId ?? -1,
-          url: e.url,
-          domain: e.domain,
-          openedAt: e.ts - tabAgeMs,
-          focusMs,
-          focusCount,
-          pinned: false,
-          groupId: -1,
-        },
-        stats: undefined,
-        sameDomainOpenCount: 1,
-        now: e.ts,
-      });
-      await trainImplicitCleanup({
-        features,
-        domain: e.domain,
-        closedByUser: true,
-      });
-      cleanupCount += 1;
+      if (trained) openCount += 1;
+      recentFocus.push({ domain: e.domain, ts: e.ts });
     }
   }
 
   return { openSamples: openCount, cleanupSamples: cleanupCount };
+}
+
+// Timestamps (ms) at which ≥3 tabs closed within the same second — a window
+// (or the browser) closing, not individual cleanup decisions. Used for
+// historical rows logged before close events carried meta.windowClosing.
+function windowCloseBursts(events: TabEvent[]): Set<number> {
+  const out = new Set<number>();
+  const closes = events.filter((e) => e.type === 'close');
+  for (let i = 0; i < closes.length; i++) {
+    let j = i;
+    while (j + 1 < closes.length && closes[j + 1].ts - closes[i].ts < 1000) j++;
+    if (j - i + 1 >= 3) for (let k = i; k <= j; k++) out.add(closes[k].ts);
+    i = j;
+  }
+  return out;
 }
 

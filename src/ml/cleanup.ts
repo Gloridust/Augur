@@ -4,6 +4,8 @@ import type {
   CleanupFeatures,
   CleanupSweep,
   CleanupTier,
+  DomainStats,
+  TabRuntimeState,
 } from '../shared/types';
 import { getIdleState, getStateMap } from '../background/state';
 import { getDomainStats } from './aggregate';
@@ -24,6 +26,8 @@ import {
   saveCleanupModel,
 } from './persistence';
 import { CLEANUP_FEATURE_NAMES } from './features';
+import { markDirty } from './flush';
+import { lazy } from './lazy';
 
 const FEATURE_COUNT = CLEANUP_FEATURE_NAMES.length;
 const MIN_TAB_AGE_FOR_SUGGEST_MS = 30 * 60 * 1000;
@@ -38,7 +42,11 @@ const SCORE_THRESHOLD = 0.55;
 // recall matters more than precision: include anything that trips a simple,
 // explainable staleness rule, regardless of the model score, and let the
 // user uncheck the few keepers.
-const STALE_HOURS_FLOOR = 2; // not focused in ≥2h → eligible for the sweep
+// Not focused in ≥12h → eligible for the sweep (opt-in tier). Was 2h, but the
+// owner's log shows backgrounded tabs idle 0.5–2h are refocused 99% of the
+// time and 2–6h 98%; closing only becomes common past ~6h (24%) and >24h
+// (32%). The model tier still surfaces fresher tabs it is confident about.
+const STALE_HOURS_FLOOR = 12;
 const SWEEP_CAP = 200; // hard ceiling so a pathological 500-tab window stays bounded
 
 const TIER_RANK: Record<CleanupTier, number> = {
@@ -64,17 +72,22 @@ function classifyTier(features: CleanupFeatures, modelFlagged: boolean): Cleanup
   return modelFlagged ? 'model' : null;
 }
 
-let cachedModel: OnlineLogReg | null = null;
-let cachedBandit: BetaBandit | null = null;
+const modelCache = lazy<OnlineLogReg>(() => loadCleanupModel(FEATURE_COUNT));
+const banditCache = lazy<BetaBandit>(() => loadBandit('cleanup'));
 
-async function getModel(): Promise<OnlineLogReg> {
-  if (!cachedModel) cachedModel = await loadCleanupModel(FEATURE_COUNT);
-  return cachedModel;
+function getModel(): Promise<OnlineLogReg> {
+  return modelCache.get();
 }
 
-async function getBandit(): Promise<BetaBandit> {
-  if (!cachedBandit) cachedBandit = await loadBandit('cleanup');
-  return cachedBandit;
+function getBandit(): Promise<BetaBandit> {
+  return banditCache.get();
+}
+
+function persistModel(model: OnlineLogReg): void {
+  markDirty('cleanup.model', () => saveCleanupModel(model));
+}
+function persistBandit(bandit: BetaBandit): void {
+  markDirty('cleanup.bandit', () => saveBandit('cleanup', bandit));
 }
 
 function banditArmId(domain: string, reason: string): string {
@@ -303,7 +316,7 @@ export async function recordCleanupImpressions(
     const domain = extractDomain(c.tab.url);
     bandit.recordImpression(banditArmId(domain, c.reason));
   }
-  await saveBandit('cleanup', bandit);
+  persistBandit(bandit);
 }
 
 export async function trainCleanupFeedback(
@@ -345,33 +358,62 @@ export async function trainCleanupFeedback(
     features: features as unknown as Record<string, number>,
   });
 
-  await saveCleanupModel(model);
-  await saveBandit('cleanup', bandit);
+  persistModel(model);
+  persistBandit(bandit);
 }
 
-// Implicit labels: a tab the user proactively closed without us suggesting it
-// is a positive example (especially if low engagement). A tab still open after
-// 7 days with non-trivial focus is a negative example.
-export async function trainImplicitCleanup(args: {
+// ── Implicit labels from OUTCOMES, not rules ────────────────────────────
+// The question the cleanup head answers: "this tab has been sitting in the
+// background — will the user close it rather than come back to it?" The event
+// log answers that for every backgrounded tab, eventually:
+//   refocused → label 0 (the user still wanted it)
+//   closed while still in the background → label 1 (a real zombie)
+// Both are observed at the moment they happen, with features describing the
+// tab's state just before — no heuristic in the loop.
+//
+// This replaces a rule (`focusRate < 5% || idle > 6h` ⇒ "stale") whose inputs
+// were themselves model features, so the model could only re-learn the rule —
+// and the rule was wrong for heavy users: in a 46-day trace, backgrounded tabs
+// idle 2–6h were refocused 98% of the time.
+//
+// Only gaps ≥ OUTCOME_MIN_IDLE_MS count: shorter ones are ordinary tab
+// toggling, and cleanup never considers tabs that fresh anyway.
+export const OUTCOME_MIN_IDLE_MS = 30 * 60 * 1000;
+
+// Feature snapshot for an outcome example. Shared by the live SW path and the
+// replay trainer so the two can never build these examples differently.
+export function outcomeFeatures(
+  state: TabRuntimeState,
+  stats: DomainStats | undefined,
+  now: number,
+): CleanupFeatures {
+  return buildCleanupFeatures({
+    tab: {
+      id: state.tabId,
+      url: state.url,
+      title: state.title,
+      pinned: state.pinned,
+      active: false,
+      groupId: state.groupId,
+    } as chrome.tabs.Tab,
+    state,
+    stats,
+    sameDomainOpenCount: 1,
+    now,
+  });
+}
+
+export async function trainCleanupOutcome(args: {
   features: CleanupFeatures;
-  domain: string;
-  closedByUser: boolean;
+  outcome: 'refocused' | 'closed';
 }): Promise<void> {
+  if (args.features.timeSinceFocusMs < OUTCOME_MIN_IDLE_MS) return;
   const model = await getModel();
-  if (args.closedByUser) {
-    const isStale =
-      args.features.focusRate < 0.05 ||
-      args.features.timeSinceFocusMs > 6 * 60 * 60 * 1000;
-    model.update(vectorFromCleanup(args.features), isStale ? 1 : 0, 0.4);
-  } else {
-    const isKept =
-      args.features.tabAgeMs > 7 * 24 * 60 * 60 * 1000 && args.features.focusCount > 1;
-    if (isKept) model.update(vectorFromCleanup(args.features), 0, 0.4);
-  }
-  await saveCleanupModel(model);
+  model.update(vectorFromCleanup(args.features), args.outcome === 'closed' ? 1 : 0, 1);
+  persistModel(model);
 }
 
 export function clearCleanupCaches(): void {
-  cachedModel = null;
-  cachedBandit = null;
+  modelCache.reset();
+  banditCache.reset();
 }

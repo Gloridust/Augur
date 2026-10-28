@@ -31,7 +31,10 @@ import {
   loadSequenceMemory,
   saveBandit,
   saveRecommendModel,
+  saveSequenceMemory,
 } from './persistence';
+import { markDirty } from './flush';
+import { lazy } from './lazy';
 import { DomainSequenceMemory } from './models/markov';
 import { RandomForest } from './models/randomforest';
 import { SkipGramEmbedding } from './models/embedding';
@@ -65,23 +68,38 @@ const POOL_CAP = 120; // ceiling after candidate-generator expansion (Phase 3.4)
 const MAX_SUGGESTIONS = 5;
 const COLD_START_FRECENCY_FLOOR = 5;
 
-let cachedModel: OnlineLogReg | null = null;
-let cachedBandit: BetaBandit | null = null;
-let cachedSeq: DomainSequenceMemory | null = null;
-let cachedForest: RandomForest | null = null;
-let cachedTransition: TransitionModel | null = null;
-let cachedMlp: TinyMLP | null = null;
+const modelCache = lazy<OnlineLogReg>(() => loadRecommendModel(FEATURE_COUNT));
+const banditCache = lazy<BetaBandit>(() => loadBandit('recommend'));
+const seqCache = lazy<DomainSequenceMemory>(() => loadSequenceMemory());
+const forestCache = lazy<RandomForest>(() => loadRecommendForest());
+const transitionCache = lazy<TransitionModel>(() => loadTransition());
+const mlpCache = lazy<TinyMLP>(() => loadMlp(FEATURE_COUNT));
 // Phase 5 MLP is OFF by default — flipped via the debug panel after a
 // backtest confirms it helps. Read from KV once and cached.
 let mlpEnabled: boolean | null = null;
 
-async function getTransition(): Promise<TransitionModel> {
-  if (!cachedTransition) cachedTransition = await loadTransition();
-  return cachedTransition;
+// Deferred saves (see ./flush). Each marks its blob dirty; one timer persists.
+function persistModel(model: OnlineLogReg): void {
+  markDirty('recommend.model', () => saveRecommendModel(model));
 }
-async function getMlp(): Promise<TinyMLP> {
-  if (!cachedMlp) cachedMlp = await loadMlp(FEATURE_COUNT);
-  return cachedMlp;
+function persistBandit(bandit: BetaBandit): void {
+  markDirty('recommend.bandit', () => saveBandit('recommend', bandit));
+}
+function persistTransition(t: TransitionModel): void {
+  markDirty('recommend.transition', () => saveTransition(t));
+}
+function persistMlp(m: TinyMLP): void {
+  markDirty('recommend.mlp', () => saveMlp(m));
+}
+function persistSeq(s: DomainSequenceMemory): void {
+  markDirty('recommend.sequence', () => saveSequenceMemory(s));
+}
+
+function getTransition(): Promise<TransitionModel> {
+  return transitionCache.get();
+}
+function getMlp(): Promise<TinyMLP> {
+  return mlpCache.get();
 }
 async function isMlpEnabled(): Promise<boolean> {
   if (mlpEnabled === null) {
@@ -104,24 +122,20 @@ export async function mlpStatus(): Promise<{ enabled: boolean; ready: boolean; t
   };
 }
 
-async function getModel(): Promise<OnlineLogReg> {
-  if (!cachedModel) cachedModel = await loadRecommendModel(FEATURE_COUNT);
-  return cachedModel;
+function getModel(): Promise<OnlineLogReg> {
+  return modelCache.get();
 }
 
-async function getBandit(): Promise<BetaBandit> {
-  if (!cachedBandit) cachedBandit = await loadBandit('recommend');
-  return cachedBandit;
+function getBandit(): Promise<BetaBandit> {
+  return banditCache.get();
 }
 
-export async function getSequenceMemory(): Promise<DomainSequenceMemory> {
-  if (!cachedSeq) cachedSeq = await loadSequenceMemory();
-  return cachedSeq;
+export function getSequenceMemory(): Promise<DomainSequenceMemory> {
+  return seqCache.get();
 }
 
-async function getForest(): Promise<RandomForest> {
-  if (!cachedForest) cachedForest = await loadRecommendForest();
-  return cachedForest;
+function getForest(): Promise<RandomForest> {
+  return forestCache.get();
 }
 
 // Invalidate the forest cache so the next inference reloads from KV. The
@@ -129,7 +143,34 @@ async function getForest(): Promise<RandomForest> {
 // the SW (which may have already loaded an older forest into memory) picks
 // up the new one without restart.
 export function invalidateForestCache(): void {
-  cachedForest = null;
+  forestCache.reset();
+}
+
+// Sequence-memory + factorized-transition training on a raw TAB SWITCH
+// (focus moved from one domain to another). Tab switches are ~10× more
+// frequent than switch-opens and are exactly the "where does attention go
+// next" signal both models encode. The transition model used to be trained
+// only on switch-opens and was still at random init after 45 steps
+// (factorizedTransition ≈ 0.5 ± 0.01 for every candidate — pure noise that
+// the LR's standardization amplified into a full-scale feature).
+export async function observeFocusTransition(
+  prevHistory: string[],
+  next: string,
+  ts: number,
+): Promise<void> {
+  if (!next || prevHistory.length === 0) return;
+  const hour = new Date(ts).getHours();
+  const seq = await getSequenceMemory();
+  seq.observe(prevHistory, next, ts, hour);
+  persistSeq(seq);
+
+  const from = prevHistory[prevHistory.length - 1];
+  if (from && from !== next && !from.startsWith('chrome') && !next.startsWith('chrome')) {
+    const transition = await getTransition();
+    const negatives = transition.sampleNegatives(5, new Set([from, next]));
+    transition.observe(from, next, negatives);
+    persistTransition(transition);
+  }
 }
 
 function banditArmId(domain: string): string {
@@ -483,7 +524,7 @@ export async function recordRecommendImpressions(
 ): Promise<void> {
   const bandit = await getBandit();
   for (const c of candidates) bandit.recordImpression(banditArmId(c.domain));
-  await saveBandit('recommend', bandit);
+  persistBandit(bandit);
 }
 
 export async function trainRecommendFeedback(
@@ -508,8 +549,8 @@ export async function trainRecommendFeedback(
     features: features as unknown as Record<string, number>,
   });
 
-  await saveRecommendModel(model);
-  await saveBandit('recommend', bandit);
+  persistModel(model);
+  persistBandit(bandit);
 }
 
 // Implicit positive: any time the user opens (or navigates to) a domain
@@ -543,9 +584,9 @@ export async function trainImplicitOpen(
     // train INTO this model and do NOT persist (the live model is untouched).
     modelOverride?: OnlineLogReg;
   },
-): Promise<void> {
-  if (!event.domain) return;
-  if (event.type !== 'open' && event.type !== 'navigate') return;
+): Promise<boolean> {
+  if (!event.domain) return false;
+  if (event.type !== 'open' && event.type !== 'navigate') return false;
 
   const focusHistory = ctx?.focusHistory ?? [];
   const focusedDomain = ctx?.focusedDomain;
@@ -564,8 +605,8 @@ export async function trainImplicitOpen(
   // duplicate. Shrunk to 2 min so legitimate returns count as training and
   // prediction targets — high-frequency work switching is exactly what we
   // want to learn.
-  if (event.domain === focusedDomain) return;
-  if (ctx?.recentlyFocusedDomains?.includes(event.domain)) return;
+  if (event.domain === focusedDomain) return false;
+  if (ctx?.recentlyFocusedDomains?.includes(event.domain)) return false;
 
   const model = ctx?.modelOverride ?? (await getModel());
   const embedding = await getEmbedding();
@@ -624,7 +665,10 @@ export async function trainImplicitOpen(
   const EASY_NEG_COUNT = 3;
   const HARD_NEG_COUNT = 2;
 
-  const exclude = new Set<string>([event.domain]);
+  // Serving never ranks a domain that's already open in a tab (see the
+  // isCurrentlyOpen skip in scoreOpenCandidates), so neither may training:
+  // open domains are excluded from the negatives.
+  const exclude = new Set<string>([event.domain, ...openDomains]);
   if (focusedDomain) exclude.add(focusedDomain);
 
   const hardCandidates = seq
@@ -656,44 +700,48 @@ export async function trainImplicitOpen(
   // (learning-to-rank), instead of K independent binary updates.
   const negDomains = [...hardCandidates, ...easySampled];
   const group: Array<{ x: number[]; positive: boolean }> = [];
-  const posFeatures = await buildFor(event.domain, true);
+  // isCurrentlyOpen is 0 for every group member. It used to be hard-coded
+  // TRUE for the positive (the tab that was just opened makes its own domain
+  // "open") and mostly false for negatives — a target leak: the feature
+  // literally encoded "this is the answer", grew to the 2nd-largest weight,
+  // and starved the real features of gradient. At serve time it is always 0
+  // (open domains are skipped), so 0 here is the only train/serve-consistent
+  // value. The random-forest trainer already used false.
+  const posFeatures = await buildFor(event.domain, false);
   group.push({ x: vectorFromRecommend(posFeatures), positive: true });
   for (const d of negDomains) {
-    const negFeatures = await buildFor(d, openDomains.includes(d));
+    const negFeatures = await buildFor(d, false);
     group.push({ x: vectorFromRecommend(negFeatures), positive: false });
   }
   model.updateGroup(group, ctx?.sampleWeight ?? 1);
 
   // Backtest path trains only the LR override — leave the shared
   // transition/MLP/persistence untouched.
-  if (ctx?.modelOverride) return;
+  if (ctx?.modelOverride) return true;
 
-  // Phase 2.3: train the factorized transition model on the same
-  // (from→to, negatives) example.
+  // Phase 2.3: the factorized transition model also learns from this
+  // (from→to, negatives) example; its main feed is every tab switch
+  // (observeFocusTransition).
   if (focusedDomain) {
     transition.observe(focusedDomain, event.domain, negDomains);
-    await saveTransition(transition);
+    persistTransition(transition);
   }
 
-  // Phase 5: train the (off-by-default) MLP on the same group so it's warm
-  // and backtest-comparable whenever the user chooses to enable it.
-  // (saveMlp is a STATIC import — a prior `await import('./persistence')`
-  // here threw "document is not defined" in the service worker and was
-  // silently swallowed, so the MLP trained in memory but never persisted,
-  // leaving its toggle stuck at 0/50 forever.)
+  // Phase 5: keep the (off-by-default) MLP warm on the same group.
   try {
     const mlp = await getMlp();
     mlp.updateGroup(group, ctx?.sampleWeight ?? 1);
-    await saveMlp(mlp);
+    persistMlp(mlp);
   } catch (err) {
-    void logError('mlpTrainSave', err);
+    void logError('mlpTrain', err);
   }
 
-  await saveRecommendModel(model);
+  persistModel(model);
+  return true;
 }
 
 export function clearSequenceMemoryCache(): void {
-  cachedSeq = null;
+  seqCache.reset();
 }
 
 // Dwell-time feedback — called from the SW's tab-close handler. An open is
@@ -720,15 +768,15 @@ export async function nudgeRecommendOnClose(args: {
   } else {
     return; // ambiguous dwell — no update, skip the save
   }
-  await saveBandit('recommend', bandit);
+  persistBandit(bandit);
 }
 
 export function clearRecommendCaches(): void {
-  cachedModel = null;
-  cachedBandit = null;
-  cachedSeq = null;
-  cachedForest = null;
-  cachedTransition = null;
-  cachedMlp = null;
+  modelCache.reset();
+  banditCache.reset();
+  seqCache.reset();
+  forestCache.reset();
+  transitionCache.reset();
+  mlpCache.reset();
   mlpEnabled = null;
 }

@@ -138,6 +138,20 @@ export class TransitionModel {
     return scored.slice(0, k).map((x) => x.d);
   }
 
+  // Uniformly sample up to k known domains for negatives, skipping `exclude`.
+  // Used when training on raw focus transitions, where there's no candidate
+  // pool at hand.
+  sampleNegatives(k: number, exclude: Set<string>): string[] {
+    const pool = this.state.domains.filter((d) => !exclude.has(d));
+    const out: string[] = [];
+    for (let i = 0; i < k && pool.length > 0; i++) {
+      const j = Math.floor(Math.random() * pool.length);
+      out.push(pool[j]);
+      pool.splice(j, 1);
+    }
+    return out;
+  }
+
   get vocab(): number {
     return this.state.domains.length;
   }

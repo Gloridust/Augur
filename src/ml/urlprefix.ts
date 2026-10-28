@@ -1,4 +1,6 @@
 import { db } from '../shared/db';
+import { markDirty } from './flush';
+import { lazy } from './lazy';
 
 // Per-domain URL-prefix table (Phase 4.3). User value is URL-granular, not
 // domain-granular: "github.com" is not actionable, "github.com/you/repo"
@@ -29,10 +31,20 @@ export interface UrlPrefixState {
   updatedAt: number;
 }
 
-let cache: UrlPrefixState | null = null;
-
 function empty(): UrlPrefixState {
   return { byDomain: {}, updatedAt: 0 };
+}
+
+const cache = lazy<UrlPrefixState>(async () => {
+  const row = await db.kv.get(KV_KEY);
+  const raw = row?.value as UrlPrefixState | undefined;
+  return raw && raw.byDomain ? raw : empty();
+});
+
+function persist(s: UrlPrefixState): void {
+  markDirty('urlPrefixes', async () => {
+    await db.kv.put({ key: KV_KEY, value: s, updatedAt: s.updatedAt });
+  });
 }
 
 // Reduce a URL to "scheme://host/seg1/seg2" — enough to identify a workspace
@@ -50,12 +62,8 @@ export function prefixOf(url: string | undefined): string | null {
   }
 }
 
-export async function loadUrlPrefixes(): Promise<UrlPrefixState> {
-  if (cache) return cache;
-  const row = await db.kv.get(KV_KEY);
-  const raw = row?.value as UrlPrefixState | undefined;
-  cache = raw && raw.byDomain ? raw : empty();
-  return cache;
+export function loadUrlPrefixes(): Promise<UrlPrefixState> {
+  return cache.get();
 }
 
 export async function bumpUrlPrefix(
@@ -76,7 +84,7 @@ export async function bumpUrlPrefix(
     s.byDomain[domain] = list.slice(0, TOP_PER_DOMAIN);
   }
   s.updatedAt = now;
-  await db.kv.put({ key: KV_KEY, value: s, updatedAt: now });
+  persist(s);
 }
 
 export async function pruneUrlPrefixes(now: number): Promise<void> {
@@ -114,5 +122,5 @@ export function topPrefixFrom(
 }
 
 export function clearUrlPrefixCache(): void {
-  cache = null;
+  cache.reset();
 }

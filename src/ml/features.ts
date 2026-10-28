@@ -101,6 +101,20 @@ export function vectorFromRecommend(f: RecommendFeatures): number[] {
   return RECOMMEND_FEATURE_NAMES.map((n) => Number(f[n]) || 0);
 }
 
+// How long a tab has been out of the user's sight. Single source of truth for
+// the cleanup features, the stale badge and the Declutter tiers, so the three
+// can never disagree about what "idle" means.
+//   focused now       → 0
+//   lastFocusedAt     → now − lastFocusedAt (exact)
+//   legacy state      → tabAge − focusMs (pre-lastFocusedAt approximation)
+//   never focused     → tabAge
+export function idleMsOf(state: TabRuntimeState, now: number): number {
+  if (state.focusedAt !== undefined) return 0;
+  if (state.lastFocusedAt !== undefined) return Math.max(0, now - state.lastFocusedAt);
+  const age = Math.max(0, now - state.openedAt);
+  return state.focusCount > 0 ? Math.max(0, age - state.focusMs) : age;
+}
+
 export function buildCleanupFeatures(args: {
   tab: chrome.tabs.Tab;
   state: TabRuntimeState | undefined;
@@ -145,12 +159,7 @@ export function buildCleanupFeatures(args: {
   const tabAgeMs = state ? Math.max(0, now - state.openedAt) : 0;
   const focusMs = state?.focusMs ?? 0;
   const focusCount = state?.focusCount ?? 0;
-  const focusedAt = state?.focusedAt;
-  const timeSinceFocusMs = focusedAt
-    ? Math.max(0, now - focusedAt)
-    : focusCount > 0
-      ? Math.max(0, tabAgeMs - focusMs)
-      : tabAgeMs;
+  const timeSinceFocusMs = state ? idleMsOf(state, now) : 0;
   const focusRate = tabAgeMs > 0 ? focusMs / tabAgeMs : 0;
   const date = new Date(now);
   const hour = date.getHours();

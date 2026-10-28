@@ -55,27 +55,32 @@ export function calibrateFrom(state: BlendCalibState, score: number): number {
 // whether the top domain was opened within 5 min, and fits (a, b) by a few
 // epochs of 1-D logistic regression on (logit(topScore) → label).
 export async function trainBlendCalib(now = Date.now()): Promise<{ samples: number }> {
-  const events = await db.events.orderBy('ts').toArray();
+  // Index-driven: fetch only the impressions, then for each one only the
+  // 5-minute window after it. (Previously a full scan of the events table
+  // every 6 hours.)
+  const shown = await db.events
+    .where('[type+ts]')
+    .between(['oracle_shown', 0], ['oracle_shown', now], true, true)
+    .toArray();
   const samples: Array<{ x: number; y: number }> = [];
 
-  for (let i = 0; i < events.length; i++) {
-    const e = events[i];
-    if (e.type !== 'oracle_shown') continue;
+  for (const e of shown) {
     const meta = e.meta as { scores?: number[] } | undefined;
-    const domains = e.domains;
     const topScore = meta?.scores?.[0];
-    const topDomain = domains?.[0];
+    const topDomain = e.domains?.[0];
     if (topScore === undefined || !topDomain) continue;
     // Label: opened topDomain within the window after the impression.
-    let opened = 0;
-    for (let j = i + 1; j < events.length; j++) {
-      const f = events[j];
-      if (f.ts - e.ts > OPEN_WINDOW_MS) break;
-      if ((f.type === 'open' || f.type === 'navigate' || f.type === 'oracle_accepted') && f.domain === topDomain) {
-        opened = 1;
-        break;
-      }
-    }
+    const after = await db.events
+      .where('ts')
+      .between(e.ts, e.ts + OPEN_WINDOW_MS, false, true)
+      .toArray();
+    const opened = after.some(
+      (f) =>
+        (f.type === 'open' || f.type === 'navigate' || f.type === 'oracle_accepted') &&
+        f.domain === topDomain,
+    )
+      ? 1
+      : 0;
     samples.push({ x: logit(topScore), y: opened });
   }
 

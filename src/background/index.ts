@@ -1,42 +1,44 @@
-import { db, extractDomain } from '../shared/db';
+import { db, extractDomain, MAINTENANCE_REBUILD_KEY } from '../shared/db';
 import type { OpenSource, TabEvent, TabRuntimeState } from '../shared/types';
 import {
   decayAndPrune,
   getDomainStats,
+  rebuildFromEvents,
   updateCooccurrenceForOpen,
   updateOnEvent,
 } from '../ml/aggregate';
-import { trainImplicitCleanup } from '../ml/cleanup';
+import { outcomeFeatures, trainCleanupOutcome } from '../ml/cleanup';
 import { trainEmbeddingBatch } from '../ml/embedding-train';
 import {
-  getSequenceMemory,
   invalidateForestCache,
   nudgeRecommendOnClose,
+  observeFocusTransition,
   trainImplicitOpen,
 } from '../ml/recommend';
 import { replayImplicitTraining, trainRecommendForest } from '../ml/rf-train';
-import { buildCleanupFeatures } from '../ml/features';
-import {
-  RECOMMEND_MODEL_VERSION,
-  saveSequenceMemory,
-  setLastAggregateAt,
-} from '../ml/persistence';
+import { idleMsOf } from '../ml/features';
+import { RECOMMEND_MODEL_VERSION, setLastAggregateAt } from '../ml/persistence';
 import { bumpCircadian, decayCircadian } from '../ml/circadian';
 import { bumpUrlPrefix, pruneUrlPrefixes } from '../ml/urlprefix';
 import { observeDomainText, pruneDomainText } from '../ml/domaintext';
 import { trainBlendCalib } from '../ml/blendcalib';
 import { bootstrapFromHistory } from '../ml/history-bootstrap';
+import { flushAll } from '../ml/flush';
 import { logError } from '../shared/errorlog';
 import { registerMessaging } from './messaging';
+import { enqueue } from './queue';
 import {
   deleteTabState,
+  flushState,
   getFocusedTabId,
   getIdleState,
   getStateMap,
   getTabState,
+  replaceStateMap,
   setFocusedTabId,
   setIdleState,
   setTabState,
+  type StateMap,
 } from './state';
 
 const IDLE_DETECTION_SECONDS = 60;
@@ -51,37 +53,27 @@ const IDLE_DETECTION_SECONDS = 60;
 const FOCUS_HISTORY_KEY = 'augur:focusHistory';
 const FOCUS_HISTORY_MAX = 8;
 
+// In memory for this SW lifetime, written through to storage.session (the
+// dashboard RPC context builder reads it from there).
+let focusHistoryCache: string[] | null = null;
+
 async function getFocusHistory(): Promise<string[]> {
-  const out = await chrome.storage.session.get(FOCUS_HISTORY_KEY);
-  const v = out[FOCUS_HISTORY_KEY];
-  return Array.isArray(v) ? (v as string[]) : [];
+  if (!focusHistoryCache) {
+    const out = await chrome.storage.session.get(FOCUS_HISTORY_KEY);
+    const v = out[FOCUS_HISTORY_KEY];
+    focusHistoryCache = Array.isArray(v) ? (v as string[]) : [];
+  }
+  return focusHistoryCache;
 }
 
-async function pushFocusHistory(domain: string): Promise<string[]> {
-  if (!domain) return getFocusHistory();
-  let seq = await getFocusHistory();
+async function pushFocusHistory(domain: string): Promise<void> {
+  if (!domain) return;
+  const seq = await getFocusHistory();
   // Dedupe consecutive identical focuses — toggling away and back to
   // the same tab shouldn't fill the buffer with one repeated domain.
-  if (seq.length > 0 && seq[seq.length - 1] === domain) return seq;
-  seq = [...seq, domain];
-  if (seq.length > FOCUS_HISTORY_MAX) seq = seq.slice(-FOCUS_HISTORY_MAX);
-  await chrome.storage.session.set({ [FOCUS_HISTORY_KEY]: seq });
-  return seq;
-}
-
-// Train the sequence memory on a (history → next) transition. The history
-// is the buffer state BEFORE the new domain was pushed.
-async function observeSequenceTransition(
-  prevHistory: string[],
-  next: string,
-  ts: number,
-): Promise<void> {
-  if (!next) return;
-  if (prevHistory.length === 0) return;
-  const seq = await getSequenceMemory();
-  const hour = new Date(ts).getHours();
-  seq.observe(prevHistory, next, ts, hour);
-  await saveSequenceMemory(seq);
+  if (seq.length > 0 && seq[seq.length - 1] === domain) return;
+  focusHistoryCache = [...seq, domain].slice(-FOCUS_HISTORY_MAX);
+  await chrome.storage.session.set({ [FOCUS_HISTORY_KEY]: focusHistoryCache });
 }
 
 function nowParts(): { ts: number; hourOfDay: number; dayOfWeek: number } {
@@ -96,18 +88,26 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 const RECENT_FOCUS_MS = 2 * 60 * 1000;
 const SESSION_KEY = 'augur:session'; // { startTs, lastEventTs }
 
+let sessionCache: { startTs: number; lastEventTs: number } | null = null;
+
 async function touchSession(now: number): Promise<number> {
-  const out = await chrome.storage.session.get(SESSION_KEY);
-  const prev = out[SESSION_KEY] as { startTs: number; lastEventTs: number } | undefined;
-  let startTs = prev?.startTs ?? now;
-  const lastEventTs = prev?.lastEventTs ?? now;
-  if (now - lastEventTs > SESSION_GAP_MS) startTs = now; // new session after a gap
-  await chrome.storage.session.set({ [SESSION_KEY]: { startTs, lastEventTs: now } });
-  return startTs;
+  if (!sessionCache) {
+    const out = await chrome.storage.session.get(SESSION_KEY);
+    sessionCache =
+      (out[SESSION_KEY] as { startTs: number; lastEventTs: number } | undefined) ?? {
+        startTs: now,
+        lastEventTs: now,
+      };
+  }
+  if (now - sessionCache.lastEventTs > SESSION_GAP_MS) sessionCache.startTs = now; // new session after a gap
+  sessionCache.lastEventTs = now;
+  await chrome.storage.session.set({ [SESSION_KEY]: sessionCache });
+  return sessionCache.startTs;
 }
 
-// Domains focused/opened/navigated within the last 15 minutes — the
-// switch-event filter's "recently seen" set (Phase 1.1).
+// Domains focused/opened/navigated within the last RECENT_FOCUS_MS — the
+// switch-event filter's "recently seen" set (Phase 1.1). Must be read BEFORE
+// the triggering event is written (see logEvent).
 async function recentlyFocusedDomains(now: number): Promise<string[]> {
   const since = now - RECENT_FOCUS_MS;
   const rows = await db.events
@@ -120,25 +120,26 @@ async function recentlyFocusedDomains(now: number): Promise<string[]> {
   return Array.from(new Set(rows.map((e) => e.domain).filter((d): d is string => !!d)));
 }
 
-async function buildOpenContext(now: number): Promise<{
+async function buildOpenContext(now: number, ownTabId?: number): Promise<{
   focusHistory: string[];
   focusedDomain?: string;
   openDomains: string[];
   recentlyFocusedDomains: string[];
   sessionStartTs: number;
 }> {
-  const focusHistory = await getFocusHistory();
+  const focusHistory = [...(await getFocusHistory())];
   const focusedTabId = await getFocusedTabId();
   const stateMap = await getStateMap();
   const focusedDomain =
     focusedTabId !== undefined ? stateMap[focusedTabId]?.domain : undefined;
+  // Domains open in OTHER tabs (the event's own tab already shows the new
+  // domain in the state map).
   const openDomains = Object.values(stateMap)
+    .filter((s) => s.tabId !== ownTabId)
     .map((s) => s.domain)
     .filter((d): d is string => !!d);
-  const [recent, sessionStartTs] = await Promise.all([
-    recentlyFocusedDomains(now),
-    touchSession(now),
-  ]);
+  const recent = await recentlyFocusedDomains(now);
+  const sessionStartTs = await touchSession(now);
   return {
     focusHistory,
     focusedDomain,
@@ -148,25 +149,37 @@ async function buildOpenContext(now: number): Promise<{
   };
 }
 
-async function logEvent(partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'>): Promise<void> {
+// `arrival`: for open/navigate, whether the tab landed on a NEW domain (vs a
+// same-domain SPA route change). Visits, co-occurrence and the training
+// context are only about arrivals; same-domain navigations are still logged.
+async function logEvent(
+  partial: Omit<TabEvent, 'ts' | 'hourOfDay' | 'dayOfWeek'>,
+  arrival = true,
+): Promise<void> {
   const stamp = nowParts();
   const event: TabEvent = { ...partial, ...stamp };
+  const openLike = (event.type === 'open' || event.type === 'navigate') && !!event.domain;
   try {
+    // Capture the training context BEFORE persisting the event. The switch
+    // filter asks "was this domain seen in the last 2 minutes?" — with the
+    // row already written the answer was always yes (the event saw itself),
+    // so from v0.3.0 until this fix NO live open ever trained the model; all
+    // learning came from manual replays and the post-update warm-up.
+    const ctx = openLike && arrival ? await buildOpenContext(event.ts, event.tabId) : undefined;
     await db.events.add(event);
-    await updateOnEvent(event);
+    await updateOnEvent(event, arrival);
     // Keep the personal-circadian histogram current for any tracked event.
     if (event.domain) await bumpCircadian(stamp.hourOfDay, stamp.ts);
-    if ((event.type === 'open' || event.type === 'navigate') && event.domain) {
-      await updateCooccurrenceForOpen(event.domain, event.ts);
+    if (openLike && event.domain) {
       // URL-prefix table (Phase 4.3) — track the precise page, not just domain.
       await bumpUrlPrefix(event.domain, event.url, event.ts);
       // Semantic text vector — fold the page's title+URL words into the
       // domain's running-mean text embedding (the "meaning" layer).
       await observeDomainText(event.domain, event.title, event.url, event.ts);
-      // Pass real context so trainImplicitOpen computes meaningful features
-      // AND applies the switch-event filter (Phase 1.1).
-      const ctx = await buildOpenContext(event.ts);
-      await trainImplicitOpen(event, ctx);
+      if (ctx) {
+        await updateCooccurrenceForOpen(event.domain, event.ts);
+        await trainImplicitOpen(event, ctx);
+      }
     }
   } catch (err) {
     void logError('logEvent', err);
@@ -210,6 +223,7 @@ async function endFocusSegment(tabId: number, ts: number): Promise<void> {
   await setTabState({
     ...state,
     focusedAt: undefined,
+    lastFocusedAt: ts,
     focusMs: state.focusMs + segment,
   });
   await logEvent({
@@ -225,6 +239,25 @@ async function endFocusSegment(tabId: number, ts: number): Promise<void> {
 async function startFocusSegment(tabId: number, ts: number, prevTabId?: number): Promise<void> {
   const state = await getTabState(tabId);
   if (!state) return;
+  // Cleanup outcome: the user switched (from another tab) to one that had
+  // been sitting in the background, or was never viewed → NOT a zombie.
+  // Returning to the computer and refocusing the tab that was already in view
+  // (prevTabId undefined after a window/idle blur) doesn't count — that tab
+  // was never backgrounded. Features describe the state just before this
+  // focus; the ≥30-min idle gate is inside trainCleanupOutcome.
+  if (
+    state.focusedAt === undefined &&
+    prevTabId !== undefined &&
+    prevTabId !== tabId &&
+    state.domain &&
+    isTrackable(state.url)
+  ) {
+    const stats = await getDomainStats(state.domain);
+    await trainCleanupOutcome({
+      features: outcomeFeatures(state, stats, ts),
+      outcome: 'refocused',
+    });
+  }
   await setTabState({
     ...state,
     focusedAt: ts,
@@ -238,24 +271,23 @@ async function startFocusSegment(tabId: number, ts: number, prevTabId?: number):
     title: state.title,
     prevTabId,
   });
-  // Sequence-memory bookkeeping. The buffer state BEFORE we push is the
-  // "history" that led to this focus — train on (history → state.domain),
-  // then push so subsequent transitions see the latest position.
+  // Sequence memory + factorized transition learn from every tab switch.
+  // The buffer BEFORE the push is the history that led to this focus.
   if (state.domain && isTrackable(state.url)) {
-    const prevHistory = await getFocusHistory();
-    await observeSequenceTransition(prevHistory, state.domain, ts);
+    const prevHistory = [...(await getFocusHistory())];
+    await observeFocusTransition(prevHistory, state.domain, ts);
     await pushFocusHistory(state.domain);
   }
 }
 
 // ── Stale-tab badge ────────────────────────────────────────────────────────
-// A toolbar-icon badge showing the count of stale tabs (no focus in ≥2h, or
-// opened-and-never-viewed). Heavy tab-hoarders live inside their tabs, not on
-// the dashboard, so this is the one always-visible nudge toward the Declutter
-// sweep — clicking the icon opens the dashboard. Deliberately cheap: reads the
-// in-memory tab-state map, no chrome.tabs.query, no feature pipeline. Mirrors
-// the declutter sweep's staleness rules so the number roughly matches.
-const STALE_BADGE_MS = 2 * 60 * 60 * 1000;
+// Toolbar-icon count of tabs the Declutter sweep would PRE-CHECK: never
+// viewed (≥30 min old), or out of sight for ≥24 h. Heavy tab-hoarders live
+// inside their tabs, not on the dashboard, so this is the one always-visible
+// nudge. It used to count anything idle ≥2 h — but backgrounded tabs idle
+// 2–6 h are refocused 98% of the time, so that number was mostly noise.
+// Cheap: reads the in-memory tab-state map; idleness via the shared idleMsOf.
+const STALE_BADGE_MS = 24 * 60 * 60 * 1000;
 const STALE_BADGE_MIN_AGE_MS = 30 * 60 * 1000;
 async function updateStaleBadge(): Promise<void> {
   try {
@@ -263,14 +295,10 @@ async function updateStaleBadge(): Promise<void> {
     const map = await getStateMap();
     const now = Date.now();
     let stale = 0;
-    for (const key of Object.keys(map)) {
-      const s = map[Number(key)];
-      if (!s || s.pinned || s.focusedAt) continue; // skip pinned + currently-focused
-      const age = now - s.openedAt;
-      if (age < STALE_BADGE_MIN_AGE_MS) continue;
-      const neverViewed = s.focusCount === 0;
-      const idleMs = neverViewed ? age : Math.max(0, age - s.focusMs);
-      if (neverViewed || idleMs >= STALE_BADGE_MS) stale++;
+    for (const s of Object.values(map)) {
+      if (!s || s.pinned || s.focusedAt !== undefined) continue; // pinned / in view
+      if (now - s.openedAt < STALE_BADGE_MIN_AGE_MS) continue;
+      if (s.focusCount === 0 || idleMsOf(s, now) >= STALE_BADGE_MS) stale++;
     }
     await chrome.action.setBadgeBackgroundColor({ color: '#D97706' });
     await chrome.action.setBadgeText({ text: stale > 0 ? String(stale) : '' });
@@ -279,164 +307,187 @@ async function updateStaleBadge(): Promise<void> {
   }
 }
 
+// Bring the runtime map in line with the tabs that actually exist. Builds the
+// new map in memory and writes it ONCE (the old per-tab read-modify-write was
+// O(n²): ~5 MB of storage traffic for 118 tabs, during session restore).
+//
+// storage.session is wiped on browser restart and extension update, so every
+// hoarded tab used to come back with openedAt = now and focusCount = 0 — the
+// badge and Declutter went blind for hours and every restored tab looked
+// "never viewed". Adopted tabs are now seeded from Chrome's own
+// tab.lastAccessed: they've been viewed before, and that's when.
 async function reconcileOpenTabs(): Promise<void> {
   const tabs = await chrome.tabs.query({});
-  const map = await getStateMap();
+  const prevMap = await getStateMap();
   const ts = Date.now();
-  const seen = new Set<number>();
+  const next: StateMap = {};
   for (const tab of tabs) {
     if (tab.id === undefined || !isTrackable(tab.url)) continue;
-    seen.add(tab.id);
-    if (!map[tab.id]) {
-      await setTabState(freshState(tab, ts));
+    const prev = prevMap[tab.id];
+    if (prev) {
+      // Sync flag changes (pinned/grouped/title) we may have missed while asleep.
+      next[tab.id] = {
+        ...prev,
+        pinned: tab.pinned ?? prev.pinned,
+        groupId: tab.groupId ?? prev.groupId,
+        title: tab.title ?? prev.title,
+      };
     } else {
-      // Sync any flag changes (pinned/grouped) we may have missed while sleeping.
-      await setTabState({
-        ...map[tab.id],
-        pinned: tab.pinned ?? map[tab.id].pinned,
-        groupId: tab.groupId ?? map[tab.id].groupId,
-        title: tab.title ?? map[tab.id].title,
-      });
+      const lastAccessed = (tab as chrome.tabs.Tab & { lastAccessed?: number }).lastAccessed;
+      const fresh = freshState(tab, ts);
+      if (lastAccessed && lastAccessed < ts) {
+        fresh.openedAt = lastAccessed;
+        fresh.lastFocusedAt = lastAccessed;
+        fresh.focusCount = 1;
+      }
+      next[tab.id] = fresh;
     }
   }
-  for (const idStr of Object.keys(map)) {
-    const id = Number(idStr);
-    if (!seen.has(id)) await deleteTabState(id);
-  }
+  await replaceStateMap(next);
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (active?.id !== undefined) {
+  if (active?.id !== undefined && next[active.id]) {
     await setFocusedTabId(active.id);
+    if (next[active.id].focusedAt === undefined) next[active.id].focusedAt = ts;
   }
   await updateStaleBadge();
 }
 
-chrome.runtime.onInstalled.addListener(async (details) => {
-  chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
-  chrome.alarms.create('heartbeat', { periodInMinutes: 5 });
-  // `delayInMinutes` makes the first fire happen soon after install/update,
-  // not after a full period — without it, embedding waits 12h and forest
-  // waits 8h before their first training pass, which is awful for fresh
-  // installs that just ran the history bootstrap and have plenty of data
-  // to learn from immediately.
-  chrome.alarms.create('nightlyDecay', { delayInMinutes: 30, periodInMinutes: 60 * 6 });
-  chrome.alarms.create('embeddingRetrain', { delayInMinutes: 5, periodInMinutes: 60 * 12 });
-  // Random Forest batch retrain. The OnlineLogReg keeps absorbing live
-  // feedback in between; the forest captures non-linear feature
-  // interactions and gives the recommender a stable second opinion on
-  // each candidate. See src/ml/rf-train.ts.
-  chrome.alarms.create('forestRetrain', { delayInMinutes: 3, periodInMinutes: 60 * 8 });
-  await reconcileOpenTabs();
-
-  if (details.reason === 'install') {
-    // First install — seed db.events from the user's existing browser
-    // history so the model has a real distribution to learn from on day
-    // one (instead of waiting days for live tab events to accumulate).
-    // Async + non-blocking: extension is usable immediately; aggregates
-    // populate as the bootstrap finishes in the background.
-    void bootstrapFromHistory().then((r) => {
-      if (!r.skipped) {
-        console.log(
-          `[augur] history bootstrap: ${r.events} events across ${r.domains} domains`,
-        );
-      }
-    });
-  } else if (details.reason === 'update') {
-    // Clean up KV keys orphaned by past schema bumps. Adding to this list
-    // is safe — bulkDelete silently ignores keys that don't exist.
-    const STALE_KEYS = [
-      'model:cleanup:v2',
-      'model:cleanup:v3', // bumped to v4 when cluster features were added
-      'model:recommend:v2',
-      'model:recommend:v3', // bumped to v4 when seqProbShort/Long/Time were added
-      'model:recommend:v4', // bumped to v5 when implicit-train class weights were fixed
-      'model:recommend:v5', // bumped to v6 when negative-sample distribution was fixed
-      'model:recommend:v6', // bumped to v7 when mixture (easy+hard) sampling landed
-      'model:recommend:v7', // bumped to v8: +8 features, group-softmax, switch filter
-      'model:recommend:v8', // bumped to v9: +dinAttention (30 features)
-      'model:recommend:forest:v1', // forest feature shape changed (v1 → v2)
-    ];
-    let staleDeleted = 0;
-    try {
-      const existing = await db.kv.bulkGet(STALE_KEYS);
-      staleDeleted = existing.filter((v) => v !== undefined).length;
-      await db.kv.bulkDelete(STALE_KEYS);
-    } catch {
-      // ignore — kv table may not be ready yet on first SW boot
-    }
-
-    // Schema bump or undertrained model → replay implicit training from
-    // existing events so the LR has realistic weights immediately, instead
-    // of forcing the user to wait days for organic events to retrain it.
-    // Also fits the forest. Runs async / non-blocking — recommendations
-    // return immediately with a warming model.
-    //
-    // Without this, surfaces gated on model confidence (OracleHint at
-    // ≥0.55, smart-cleanup auto-select at ≥0.60) silently disappear after
-    // every model version bump until enough live events accumulate.
-    //
-    // The `warmupRecommendIfNeeded` helper internally checks the model's
-    // trained-sample count, so it's safe to call unconditionally — it
-    // no-ops if the model is already mature.
-    void warmupRecommendIfNeeded();
-    void (staleDeleted); // silence unused-var lint; kept above for telemetry
+// Alarms survive SW restarts but not every update path; (re)create any that
+// are missing. Idempotent.
+async function ensureAlarms(): Promise<void> {
+  const want: Array<[string, chrome.alarms.AlarmCreateInfo]> = [
+    ['heartbeat', { periodInMinutes: 5 }],
+    // `delayInMinutes` makes the first fire happen soon after install/update
+    // instead of after a full period.
+    ['nightlyDecay', { delayInMinutes: 30, periodInMinutes: 60 * 6 }],
+    ['embeddingRetrain', { delayInMinutes: 5, periodInMinutes: 60 * 12 }],
+    // Random Forest batch retrain — captures non-linear feature interactions
+    // between the LR's online updates. See src/ml/rf-train.ts.
+    ['forestRetrain', { delayInMinutes: 3, periodInMinutes: 60 * 8 }],
+  ];
+  for (const [name, info] of want) {
+    if (!(await chrome.alarms.get(name))) chrome.alarms.create(name, info);
   }
+}
+
+// One-time maintenance flagged by the v5 schema migration (or an import):
+// rebuild the derived aggregates from the cleaned event log, then retrain the
+// embedding on the rebuilt co-occurrence table.
+async function runPendingMaintenance(): Promise<void> {
+  const flag = await db.kv.get(MAINTENANCE_REBUILD_KEY);
+  if (!flag) return;
+  await rebuildFromEvents();
+  await trainEmbeddingBatch();
+  await db.kv.delete(MAINTENANCE_REBUILD_KEY);
+}
+
+// KV keys orphaned by past schema bumps. Adding to this list is safe —
+// bulkDelete ignores keys that don't exist.
+const STALE_KEYS = [
+  'model:cleanup:v2',
+  'model:cleanup:v3', // bumped to v4 when cluster features were added
+  'model:cleanup:v4', // bumped to v5: outcome labels replace the circular rule
+  'model:recommend:v2',
+  'model:recommend:v3', // bumped to v4 when seqProbShort/Long/Time were added
+  'model:recommend:v4', // bumped to v5 when implicit-train class weights were fixed
+  'model:recommend:v5', // bumped to v6 when negative-sample distribution was fixed
+  'model:recommend:v6', // bumped to v7 when mixture (easy+hard) sampling landed
+  'model:recommend:v7', // bumped to v8: +8 features, group-softmax, switch filter
+  'model:recommend:v8', // bumped to v9: +dinAttention (30 features)
+  'model:recommend:v9', // bumped to v10: isCurrentlyOpen leak removed, dedup'd data
+  'model:recommend:forest:v1', // forest feature shape changed (v1 → v2)
+  'model:recommend:forest:v2', // v3: newest-window training on cleaned data
+  'model:recommend:mlp:v1', // v2: retrained alongside recommend v10
+  'transition:v1', // v2: was never trained past random init
+];
+
+chrome.runtime.onInstalled.addListener((details) => {
+  chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
+  void enqueue('onInstalled', async () => {
+    await ensureAlarms();
+    await reconcileOpenTabs();
+    if (details.reason === 'install') {
+      // First install — seed db.events from the user's existing browser
+      // history so the model has a real distribution to learn from on day
+      // one. Non-blocking: the extension is usable immediately.
+      void bootstrapFromHistory().then((r) => {
+        if (!r.skipped) {
+          console.log(`[augur] history bootstrap: ${r.events} events across ${r.domains} domains`);
+        }
+      });
+      return;
+    }
+    if (details.reason === 'update') {
+      try {
+        await db.kv.bulkDelete(STALE_KEYS);
+      } catch {
+        // ignore — kv table may not be ready yet on first SW boot
+      }
+      await runPendingMaintenance();
+    }
+  }).then(() => warmupModelsIfNeeded());
 });
 
-chrome.runtime.onStartup.addListener(async () => {
+chrome.runtime.onStartup.addListener(() => {
   chrome.idle.setDetectionInterval(IDLE_DETECTION_SECONDS);
-  await reconcileOpenTabs();
-  // If the recommend LR is undertrained (< 100 samples) and we have plenty
-  // of events to learn from, replay implicit training once. Covers the
-  // case where a previous schema bump reset the model but the user got the
-  // new build BEFORE the auto-warmup logic existed — without this, surfaces
-  // gated on confidence stay dark forever.
-  void warmupRecommendIfNeeded();
+  void enqueue('onStartup', async () => {
+    await ensureAlarms();
+    await reconcileOpenTabs();
+    await runPendingMaintenance();
+  }).then(() => warmupModelsIfNeeded());
 });
 
 const WARMUP_MIN_SAMPLES = 100;
 const WARMUP_MIN_EVENTS = 200;
 let warmupAttempted = false;
 
-async function warmupRecommendIfNeeded(): Promise<void> {
+// Schema bump or undertrained models → replay implicit training from the
+// event log (both heads), refit the forest. Runs OUTSIDE the event queue so a
+// multi-second replay doesn't stall live tab tracking; the shared in-memory
+// models are race-safe (promise-cached loads, additive updates).
+//
+// Without this, surfaces gated on model confidence (OracleHint, smart-cleanup
+// auto-select) go dark after every model version bump until enough live
+// events accumulate.
+async function warmupModelsIfNeeded(): Promise<void> {
   if (warmupAttempted) return;
   warmupAttempted = true;
   try {
-    // RECOMMEND_MODEL_VERSION (not a hardcoded key): this used to say
-    // 'model:recommend:v8' and would silently stop warming after every
-    // schema bump — the exact drift a named constant exists to prevent.
     const recRow = await db.kv.get(RECOMMEND_MODEL_VERSION);
-    const rec = recRow?.value as { trainedSamples?: number } | undefined;
-    const trained = rec?.trainedSamples ?? 0;
+    const trained = (recRow?.value as { trainedSamples?: number } | undefined)?.trainedSamples ?? 0;
     if (trained >= WARMUP_MIN_SAMPLES) return;
-    const eventCount = await db.events.count();
-    if (eventCount < WARMUP_MIN_EVENTS) return;
+    if ((await db.events.count()) < WARMUP_MIN_EVENTS) return;
 
-    const replayResult = await replayImplicitTraining();
-    const forestResult = await trainRecommendForest();
+    const replay = await replayImplicitTraining();
+    const forest = await trainRecommendForest();
     invalidateForestCache();
+    await flushAll();
     console.log(
-      `[augur] LR warmup: ${trained} → ${trained + replayResult.openSamples * 6} samples; forest=${forestResult.trained}`,
+      `[augur] warm-up: ${replay.openSamples} open groups, ${replay.cleanupSamples} cleanup outcomes; forest=${forest.trained}`,
     );
   } catch (err) {
-    void logError('lrWarmup', err);
+    void logError('warmup', err);
   }
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'nightlyDecay') {
-    const now = Date.now();
-    await decayAndPrune(now);
-    await decayCircadian(now);
-    await pruneUrlPrefixes(now);
-    await pruneDomainText(now);
-    // Phase 4.2: refit the final-score calibrator from realized outcomes
-    // (oracle_shown → opened-within-5min joins).
-    try {
-      await trainBlendCalib(now);
-    } catch (err) {
-      void logError('blendCalibration', err);
-    }
-    await setLastAggregateAt(now);
+    // Rewrites the same domain/pair rows live events update → serialize.
+    void enqueue('nightlyDecay', async () => {
+      const now = Date.now();
+      await decayAndPrune(now);
+      await decayCircadian(now);
+      await pruneUrlPrefixes(now);
+      await pruneDomainText(now);
+      // Phase 4.2: refit the final-score calibrator from realized outcomes
+      // (oracle_shown → opened-within-5min joins).
+      try {
+        await trainBlendCalib(now);
+      } catch (err) {
+        void logError('blendCalibration', err);
+      }
+      await setLastAggregateAt(now);
+    });
   } else if (alarm.name === 'embeddingRetrain') {
     await trainEmbeddingBatch();
   } else if (alarm.name === 'forestRetrain') {
@@ -452,8 +503,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       void logError('forestRetrain', err);
     }
   } else if (alarm.name === 'heartbeat') {
-    // Refresh the stale-tab badge as tabs age into staleness between events.
-    await updateStaleBadge();
+    // Refresh the stale-tab badge as tabs age into staleness between events,
+    // and persist anything still pending (belt-and-braces for the timers).
+    void enqueue('heartbeat', async () => {
+      await updateStaleBadge();
+      await flushState();
+      await flushAll();
+    });
   }
 });
 
@@ -461,12 +517,20 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // promise rejection) gets persisted to the error ring-buffer so it rides
 // along in the debug bundle. Without this, SW crashes leave zero trace once
 // the worker restarts — exactly what made the "document is not defined" bug
-// take several releases to pin down.
+// take several releases to pin down. IndexedDB requests aborted because the
+// browser is quitting are expected, not bugs — they filled the July bundle's
+// errors.json and would drown real failures.
+function isShutdownNoise(reason: unknown): boolean {
+  const msg = reason instanceof Error ? reason.message : String(reason ?? '');
+  return /browser is shutting down/i.test(msg);
+}
 self.addEventListener('error', (e) => {
-  void logError('sw.onerror', (e as ErrorEvent).error ?? (e as ErrorEvent).message);
+  const reason = (e as ErrorEvent).error ?? (e as ErrorEvent).message;
+  if (!isShutdownNoise(reason)) void logError('sw.onerror', reason);
 });
 self.addEventListener('unhandledrejection', (e) => {
-  void logError('sw.unhandledrejection', (e as PromiseRejectionEvent).reason);
+  const reason = (e as PromiseRejectionEvent).reason;
+  if (!isShutdownNoise(reason)) void logError('sw.unhandledrejection', reason);
 });
 
 registerMessaging();
@@ -521,23 +585,33 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
-chrome.tabs.onCreated.addListener(async (tab) => {
-  if (tab.id === undefined || !isTrackable(tab.url)) return;
-  const ts = Date.now();
-  const state = freshState(tab, ts);
-  await setTabState(state);
-  await logEvent({
-    type: 'open',
-    tabId: tab.id,
-    windowId: tab.windowId,
-    url: tab.url,
-    domain: state.domain,
-    title: tab.title,
-    openedFrom: classifyOpenSource(tab),
+chrome.tabs.onCreated.addListener((tab) => {
+  void enqueue('tabs.onCreated', async () => {
+    if (tab.id === undefined || !isTrackable(tab.url)) return;
+    const ts = Date.now();
+    const state = freshState(tab, ts);
+    await setTabState(state);
+    await logEvent({
+      type: 'open',
+      tabId: tab.id,
+      windowId: tab.windowId,
+      url: tab.url,
+      domain: state.domain,
+      title: tab.title,
+      openedFrom: classifyOpenSource(tab),
+    });
   });
 });
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  void enqueue('tabs.onUpdated', () => handleTabUpdated(tabId, changeInfo, tab));
+});
+
+async function handleTabUpdated(
+  tabId: number,
+  changeInfo: chrome.tabs.TabChangeInfo,
+  tab: chrome.tabs.Tab,
+): Promise<void> {
   // Always sync flag/title changes to runtime state, even before page load completes.
   if (changeInfo.pinned !== undefined || changeInfo.groupId !== undefined || changeInfo.title) {
     const prev = await getTabState(tabId);
@@ -559,9 +633,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // in-app navigation in GitHub / Gmail / Twitter / Linear / etc.
   //
   // We process changeInfo.url directly here, BEFORE the status gate.
-  // Multiple onUpdated fires for the same URL (commit + complete) get
-  // de-duped by the `prev.url !== changeInfo.url` check; subsequent fires
-  // see the just-updated state and become no-ops.
+  // Multiple onUpdated fires for the same URL (commit + complete) are
+  // de-duped by the `prev.url !== changeInfo.url` check — which only works
+  // because handlers run serially (./queue); when they interleaved, both
+  // paths saw the old URL and 22% of navigates were logged twice.
   if (changeInfo.url && isTrackable(changeInfo.url)) {
     const prev = await getTabState(tabId);
     if (prev && prev.url !== changeInfo.url) {
@@ -575,14 +650,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         groupId: tab.groupId ?? prev.groupId,
         navigationCount: (prev.navigationCount ?? 0) + 1,
       });
-      await logEvent({
-        type: 'navigate',
-        tabId,
-        windowId: tab.windowId,
-        url: changeInfo.url,
-        domain: newDomain,
-        title: tab.title ?? prev.title,
-      });
+      await logEvent(
+        {
+          type: 'navigate',
+          tabId,
+          windowId: tab.windowId,
+          url: changeInfo.url,
+          domain: newDomain,
+          title: tab.title ?? prev.title,
+        },
+        prev.domain !== newDomain,
+      );
     }
   }
 
@@ -662,14 +740,17 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       groupId: tab.groupId ?? prev.groupId,
       navigationCount: (prev.navigationCount ?? 0) + 1,
     });
-    await logEvent({
-      type: 'navigate',
-      tabId,
-      windowId: tab.windowId,
-      url,
-      domain: newDomain,
-      title,
-    });
+    await logEvent(
+      {
+        type: 'navigate',
+        tabId,
+        windowId: tab.windowId,
+        url,
+        domain: newDomain,
+        title,
+      },
+      prev.domain !== newDomain,
+    );
   } else if (prev && title && prev.title !== title) {
     // URL didn't change but the title did — keep state title fresh; no event.
     await setTabState({ ...prev, title });
@@ -680,7 +761,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // check returned early and no 'open' event was logged. Log it now —
     // otherwise db.events accumulates only 'navigate' events and the
     // today recap's `tabsOpened` count stays stuck at 0.
-    await setTabState(freshState(tab, Date.now()));
+    const ts = Date.now();
+    await setTabState(freshState(tab, ts));
     await logEvent({
       type: 'open',
       tabId,
@@ -690,14 +772,30 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
       title,
       openedFrom: classifyOpenSource(tab),
     });
+    // The tab may ALREADY be the focused one: Cmd+T → type a URL activates
+    // the tab while it's still an untracked new-tab page, so onActivated's
+    // startFocusSegment found no state and did nothing. Without this, the
+    // focus segment (dwell time, the tab switch itself) of every typed-URL
+    // tab went unrecorded until the user switched away and back.
+    if ((await getFocusedTabId()) === tabId) {
+      await startFocusSegment(tabId, ts, undefined);
+    }
   }
+}
+
+chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+  void enqueue('tabs.onRemoved', () => handleTabRemoved(tabId, removeInfo));
 });
 
-chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+async function handleTabRemoved(
+  tabId: number,
+  removeInfo: chrome.tabs.TabRemoveInfo,
+): Promise<void> {
   const ts = Date.now();
   const state = await getTabState(tabId);
   const focused = await getFocusedTabId();
-  if (focused === tabId) {
+  const wasInView = focused === tabId;
+  if (wasInView) {
     await endFocusSegment(tabId, ts);
     await setFocusedTabId(undefined);
   }
@@ -713,27 +811,18 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     durationMs: ts - state.openedAt,
     focusMs: final?.focusMs ?? state.focusMs,
     focusCount: final?.focusCount ?? state.focusCount,
+    meta: { windowClosing: removeInfo.isWindowClosing },
   });
 
-  // Implicit cleanup label: only when the user closed the tab explicitly,
-  // not when the whole window was being torn down.
-  if (!removeInfo.isWindowClosing && state.domain) {
+  // Cleanup outcome: a tab closed while sitting in the BACKGROUND (not the
+  // one being looked at, not a whole window going away) was a zombie. The
+  // ≥30-min idle gate is inside trainCleanupOutcome.
+  if (!wasInView && !removeInfo.isWindowClosing && state.domain) {
     const stats = await getDomainStats(state.domain);
-    const features = buildCleanupFeatures({
-      tab: {
-        id: tabId,
-        url: state.url,
-        title: state.title,
-        pinned: state.pinned,
-        active: false,
-        groupId: state.groupId,
-      } as chrome.tabs.Tab,
-      state: { ...state, focusMs: final?.focusMs ?? state.focusMs },
-      stats,
-      sameDomainOpenCount: 1,
-      now: ts,
+    await trainCleanupOutcome({
+      features: outcomeFeatures(state, stats, ts),
+      outcome: 'closed',
     });
-    await trainImplicitCleanup({ features, domain: state.domain, closedByUser: true });
   }
 
   // Dwell-time feedback for the recommend head: a long-dwelled open was a
@@ -752,40 +841,47 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
   // Closing tabs (e.g. a Declutter sweep) should drop the badge immediately,
   // not wait for the next 5-min heartbeat.
   await updateStaleBadge();
-});
+}
 
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  const ts = Date.now();
-  const prev = await getFocusedTabId();
-  if (prev !== undefined && prev !== tabId) {
-    await endFocusSegment(prev, ts);
-  }
-  await setFocusedTabId(tabId);
-  await startFocusSegment(tabId, ts, prev);
-});
-
-chrome.windows.onFocusChanged.addListener(async (windowId) => {
-  const ts = Date.now();
-  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void enqueue('tabs.onActivated', async () => {
+    const ts = Date.now();
     const prev = await getFocusedTabId();
-    if (prev !== undefined) {
-      await endFocusSegment(prev, ts);
-      await setFocusedTabId(undefined);
-    }
-    return;
-  }
-  const [active] = await chrome.tabs.query({ active: true, windowId });
-  if (active?.id !== undefined) {
-    const prev = await getFocusedTabId();
-    if (prev !== active.id) {
-      if (prev !== undefined) await endFocusSegment(prev, ts);
-      await setFocusedTabId(active.id);
-      await startFocusSegment(active.id, ts, prev);
-    }
-  }
+    if (prev === tabId) return; // already accounted (e.g. via windows.onFocusChanged)
+    if (prev !== undefined) await endFocusSegment(prev, ts);
+    await setFocusedTabId(tabId);
+    await startFocusSegment(tabId, ts, prev);
+  });
 });
 
-chrome.idle.onStateChanged.addListener(async (state) => {
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  void enqueue('windows.onFocusChanged', async () => {
+    const ts = Date.now();
+    if (windowId === chrome.windows.WINDOW_ID_NONE) {
+      const prev = await getFocusedTabId();
+      if (prev !== undefined) {
+        await endFocusSegment(prev, ts);
+        await setFocusedTabId(undefined);
+      }
+      return;
+    }
+    const [active] = await chrome.tabs.query({ active: true, windowId });
+    if (active?.id !== undefined) {
+      const prev = await getFocusedTabId();
+      if (prev !== active.id) {
+        if (prev !== undefined) await endFocusSegment(prev, ts);
+        await setFocusedTabId(active.id);
+        await startFocusSegment(active.id, ts, prev);
+      }
+    }
+  });
+});
+
+chrome.idle.onStateChanged.addListener((state) => {
+  void enqueue('idle.onStateChanged', () => handleIdleChange(state));
+});
+
+async function handleIdleChange(state: chrome.idle.IdleState): Promise<void> {
   const ts = Date.now();
   const prev = await getIdleState();
   await setIdleState(state);
@@ -808,48 +904,54 @@ chrome.idle.onStateChanged.addListener(async (state) => {
       }
     }
   }
-});
+}
 
 // ── Tab move + attach/detach (cross-window moves) ──────────────────
 // chrome.tabs.onMoved fires for in-window reorders; onAttached / onDetached
 // fire for cross-window drags. None of these are inferable from onUpdated.
-chrome.tabs.onMoved.addListener(async (tabId, info) => {
-  const state = await getTabState(tabId);
-  await logEvent({
-    type: 'tab_moved',
-    tabId,
-    windowId: info.windowId,
-    url: state?.url,
-    domain: state?.domain,
-    title: state?.title,
-    tabIndex: info.toIndex,
-    meta: { fromIndex: info.fromIndex, toIndex: info.toIndex },
+chrome.tabs.onMoved.addListener((tabId, info) => {
+  void enqueue('tabs.onMoved', async () => {
+    const state = await getTabState(tabId);
+    await logEvent({
+      type: 'tab_moved',
+      tabId,
+      windowId: info.windowId,
+      url: state?.url,
+      domain: state?.domain,
+      title: state?.title,
+      tabIndex: info.toIndex,
+      meta: { fromIndex: info.fromIndex, toIndex: info.toIndex },
+    });
   });
 });
 
-chrome.tabs.onAttached.addListener(async (tabId, info) => {
-  const state = await getTabState(tabId);
-  await logEvent({
-    type: 'tab_attached',
-    tabId,
-    windowId: info.newWindowId,
-    url: state?.url,
-    domain: state?.domain,
-    tabIndex: info.newPosition,
-    meta: { newWindowId: info.newWindowId, newPosition: info.newPosition },
+chrome.tabs.onAttached.addListener((tabId, info) => {
+  void enqueue('tabs.onAttached', async () => {
+    const state = await getTabState(tabId);
+    await logEvent({
+      type: 'tab_attached',
+      tabId,
+      windowId: info.newWindowId,
+      url: state?.url,
+      domain: state?.domain,
+      tabIndex: info.newPosition,
+      meta: { newWindowId: info.newWindowId, newPosition: info.newPosition },
+    });
   });
 });
 
-chrome.tabs.onDetached.addListener(async (tabId, info) => {
-  const state = await getTabState(tabId);
-  await logEvent({
-    type: 'tab_detached',
-    tabId,
-    windowId: info.oldWindowId,
-    url: state?.url,
-    domain: state?.domain,
-    tabIndex: info.oldPosition,
-    meta: { oldWindowId: info.oldWindowId, oldPosition: info.oldPosition },
+chrome.tabs.onDetached.addListener((tabId, info) => {
+  void enqueue('tabs.onDetached', async () => {
+    const state = await getTabState(tabId);
+    await logEvent({
+      type: 'tab_detached',
+      tabId,
+      windowId: info.oldWindowId,
+      url: state?.url,
+      domain: state?.domain,
+      tabIndex: info.oldPosition,
+      meta: { oldWindowId: info.oldWindowId, oldPosition: info.oldPosition },
+    });
   });
 });
 
@@ -858,30 +960,36 @@ chrome.tabs.onDetached.addListener(async (tabId, info) => {
 // "user organized N tabs into a group named X at time T". Otherwise
 // derivable only from periodic snapshots, which we don't take.
 if (chrome.tabGroups) {
-  chrome.tabGroups.onCreated.addListener(async (group) => {
-    await logEvent({
-      type: 'group_created',
-      windowId: group.windowId,
-      groupId: group.id,
-      groupTitle: group.title,
-      meta: { color: group.color, collapsed: group.collapsed },
+  chrome.tabGroups.onCreated.addListener((group) => {
+    void enqueue('tabGroups.onCreated', async () => {
+      await logEvent({
+        type: 'group_created',
+        windowId: group.windowId,
+        groupId: group.id,
+        groupTitle: group.title,
+        meta: { color: group.color, collapsed: group.collapsed },
+      });
     });
   });
-  chrome.tabGroups.onUpdated.addListener(async (group) => {
-    await logEvent({
-      type: 'group_updated',
-      windowId: group.windowId,
-      groupId: group.id,
-      groupTitle: group.title,
-      meta: { color: group.color, collapsed: group.collapsed },
+  chrome.tabGroups.onUpdated.addListener((group) => {
+    void enqueue('tabGroups.onUpdated', async () => {
+      await logEvent({
+        type: 'group_updated',
+        windowId: group.windowId,
+        groupId: group.id,
+        groupTitle: group.title,
+        meta: { color: group.color, collapsed: group.collapsed },
+      });
     });
   });
-  chrome.tabGroups.onRemoved.addListener(async (group) => {
-    await logEvent({
-      type: 'group_removed',
-      windowId: group.windowId,
-      groupId: group.id,
-      groupTitle: group.title,
+  chrome.tabGroups.onRemoved.addListener((group) => {
+    void enqueue('tabGroups.onRemoved', async () => {
+      await logEvent({
+        type: 'group_removed',
+        windowId: group.windowId,
+        groupId: group.id,
+        groupTitle: group.title,
+      });
     });
   });
 }
@@ -889,22 +997,26 @@ if (chrome.tabGroups) {
 // ── Window lifecycle ────────────────────────────────────────────────
 // onCreated fires when the user spawns a new window; onRemoved when one
 // closes (even if it had open tabs that get tracked individually).
-chrome.windows.onCreated.addListener(async (window) => {
-  await logEvent({
-    type: 'window_created',
-    windowId: window.id,
-    meta: {
-      type: window.type,
-      state: window.state,
-      incognito: window.incognito,
-    },
+chrome.windows.onCreated.addListener((window) => {
+  void enqueue('windows.onCreated', async () => {
+    await logEvent({
+      type: 'window_created',
+      windowId: window.id,
+      meta: {
+        type: window.type,
+        state: window.state,
+        incognito: window.incognito,
+      },
+    });
   });
 });
 
-chrome.windows.onRemoved.addListener(async (windowId) => {
-  await logEvent({
-    type: 'window_removed',
-    windowId,
+chrome.windows.onRemoved.addListener((windowId) => {
+  void enqueue('windows.onRemoved', async () => {
+    await logEvent({
+      type: 'window_removed',
+      windowId,
+    });
   });
 });
 
@@ -912,10 +1024,12 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
 // above). Here we ALSO log it as an event — useful for reconstructing
 // "which window was the user actually looking at" for cleanup-feature
 // post-hoc analysis.
-chrome.windows.onFocusChanged.addListener(async (windowId) => {
-  await logEvent({
-    type: 'window_focus_changed',
-    windowId: windowId === chrome.windows.WINDOW_ID_NONE ? undefined : windowId,
-    meta: { lostFocus: windowId === chrome.windows.WINDOW_ID_NONE },
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  void enqueue('windows.onFocusChanged', async () => {
+    await logEvent({
+      type: 'window_focus_changed',
+      windowId: windowId === chrome.windows.WINDOW_ID_NONE ? undefined : windowId,
+      meta: { lostFocus: windowId === chrome.windows.WINDOW_ID_NONE },
+    });
   });
 });

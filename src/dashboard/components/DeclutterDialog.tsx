@@ -53,7 +53,7 @@ function tierLabel(tier: CleanupTier, t: (k: string, o?: Record<string, unknown>
       never_opened: 'Never viewed',
       stale_week: 'Idle 1+ week',
       stale_day: 'Idle 1+ day',
-      stale: 'Idle a few hours',
+      stale: 'Idle 12+ hours',
       model: 'Model-flagged',
     }[tier],
   });

@@ -117,6 +117,12 @@ export interface TabRuntimeState {
   title?: string;
   openedAt: number;
   focusedAt?: number;
+  // When the tab last LOST focus (end of its most recent focus segment), or
+  // when Chrome last activated it for tabs adopted at startup
+  // (tab.lastAccessed). The true "idle since" anchor — the old proxy
+  // `tabAge − focusMs` was wrong for any tab whose focus wasn't contiguous
+  // and reset to zero on every browser restart.
+  lastFocusedAt?: number;
   focusMs: number;
   focusCount: number;
   pinned: boolean;

@@ -13,7 +13,7 @@ import { TinyMLP, type MlpState } from './models/mlp';
 // silently mis-map indices; events stay intact and the model warms back
 // up via incremental updates.
 // v4 adds two embedding-cluster features (inActiveCluster, clusterStaleness)
-const KV_CLEANUP_MODEL = 'model:cleanup:v4';
+const KV_CLEANUP_MODEL = 'model:cleanup:v5'; // v5: outcome labels (refocused vs closed), not a rule
 // v5 fixed class-weight imbalance; v6 fixed top-frecency-only negative
 // sampling ("popular = negative" shortcut). v7 switches to MIXTURE
 // sampling — 3 easy (uniform over db.domains) + 2 hard (the sequence
@@ -31,12 +31,12 @@ const KV_CLEANUP_MODEL = 'model:cleanup:v4';
 // multiplicative bandit blend is gone — the bandit is a learned feature
 // now. Bumping resets the Adam/weight state so the new objective trains
 // clean; auto-warmup re-fits from the existing event log on update.
-const KV_RECOMMEND_MODEL = 'model:recommend:v9'; // v9: +dinAttention (30 features)
+const KV_RECOMMEND_MODEL = 'model:recommend:v10'; // v10: isCurrentlyOpen leak removed; trained on de-duplicated, arrival-based data
 const KV_SEQUENCE_MEMORY = 'sequenceMemory:v1';
-const KV_RECOMMEND_FOREST = 'model:recommend:forest:v2'; // feature shape changed
+const KV_RECOMMEND_FOREST = 'model:recommend:forest:v3'; // v3: newest-window training on cleaned data
 const KV_EVAL_HISTORY = 'evalHistory:v1';
-const KV_TRANSITION = 'transition:v1';
-const KV_MLP = 'model:recommend:mlp:v1';
+const KV_TRANSITION = 'transition:v2'; // v2: trained on every tab switch (v1 never left random init)
+const KV_MLP = 'model:recommend:mlp:v2';
 const KV_CLEANUP_BANDIT = 'bandit:cleanup:v1';
 const KV_RECOMMEND_BANDIT = 'bandit:recommend:v1';
 const KV_EMBEDDING = 'embedding:v1';

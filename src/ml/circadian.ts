@@ -1,4 +1,6 @@
 import { db } from '../shared/db';
+import { markDirty } from './flush';
+import { lazy } from './lazy';
 
 // Personal-circadian activity histogram (Phase 3.3). A single 24-bin
 // decayed count of when THIS user is active. Used to derive `hourActivityZ`
@@ -21,21 +23,20 @@ export interface CircadianState {
   updatedAt: number;
 }
 
-let cache: CircadianState | null = null;
-
 function empty(): CircadianState {
   return { hourCounts: new Array(24).fill(0), updatedAt: 0 };
 }
 
-export async function loadCircadian(): Promise<CircadianState> {
-  if (cache) return cache;
+const cache = lazy<CircadianState>(async () => {
   const row = await db.kv.get(KV_KEY);
   const raw = row?.value as CircadianState | undefined;
-  cache =
-    raw && Array.isArray(raw.hourCounts) && raw.hourCounts.length === 24
-      ? raw
-      : empty();
-  return cache;
+  return raw && Array.isArray(raw.hourCounts) && raw.hourCounts.length === 24
+    ? raw
+    : empty();
+});
+
+export function loadCircadian(): Promise<CircadianState> {
+  return cache.get();
 }
 
 export async function bumpCircadian(hour: number, now: number): Promise<void> {
@@ -43,7 +44,9 @@ export async function bumpCircadian(hour: number, now: number): Promise<void> {
   const h = ((hour % 24) + 24) % 24;
   c.hourCounts[h] += 1;
   c.updatedAt = now;
-  await db.kv.put({ key: KV_KEY, value: c, updatedAt: now });
+  markDirty('circadian', async () => {
+    await db.kv.put({ key: KV_KEY, value: c, updatedAt: c.updatedAt });
+  });
 }
 
 export async function decayCircadian(now: number): Promise<void> {
@@ -73,5 +76,5 @@ export function hourActivityZFrom(state: CircadianState, hour: number): number {
 }
 
 export function clearCircadianCache(): void {
-  cache = null;
+  cache.reset();
 }

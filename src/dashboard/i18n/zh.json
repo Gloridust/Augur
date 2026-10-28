@@ -418,7 +418,7 @@
       "never_opened": "从未查看",
       "stale_week": "一周以上未用",
       "stale_day": "一天以上未用",
-      "stale": "数小时未用",
+      "stale": "半天以上未用",
       "model": "模型判断可清理"
     }
   },

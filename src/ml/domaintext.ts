@@ -1,4 +1,6 @@
 import { db } from '../shared/db';
+import { markDirty } from './flush';
+import { lazy } from './lazy';
 import { embedText, pageText, textCosine, TEXT_DIM } from './textembed';
 
 // Per-domain semantic text vector — the running mean of the hashed text
@@ -22,18 +24,18 @@ export interface DomainTextState {
   updatedAt: number;
 }
 
-let cache: DomainTextState | null = null;
-
 function empty(): DomainTextState {
   return { byDomain: {}, updatedAt: 0 };
 }
 
-export async function loadDomainText(): Promise<DomainTextState> {
-  if (cache) return cache;
+const cache = lazy<DomainTextState>(async () => {
   const row = await db.kv.get(KV_KEY);
   const raw = row?.value as DomainTextState | undefined;
-  cache = raw && raw.byDomain ? raw : empty();
-  return cache;
+  return raw && raw.byDomain ? raw : empty();
+});
+
+export function loadDomainText(): Promise<DomainTextState> {
+  return cache.get();
 }
 
 // Fold a freshly-visited page's text into its domain's running-mean vector.
@@ -60,7 +62,9 @@ export async function observeDomainText(
     cur.n = n;
   }
   s.updatedAt = now;
-  await db.kv.put({ key: KV_KEY, value: s, updatedAt: now });
+  markDirty('domainText', async () => {
+    await db.kv.put({ key: KV_KEY, value: s, updatedAt: s.updatedAt });
+  });
 }
 
 export async function pruneDomainText(now: number): Promise<void> {
@@ -113,5 +117,5 @@ export function sessionTextVec(
 }
 
 export function clearDomainTextCache(): void {
-  cache = null;
+  cache.reset();
 }

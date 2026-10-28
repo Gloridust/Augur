@@ -1,5 +1,6 @@
-import { db } from '../shared/db';
+import { db, findDuplicateEventIds, MAINTENANCE_REBUILD_KEY } from '../shared/db';
 import { loadErrorLog } from '../shared/errorlog';
+import { discardDirty, flushAll } from './flush';
 import type { DataSummary } from '../shared/types';
 import { clearCleanupCaches } from './cleanup';
 import { clearCircadianCache } from './circadian';
@@ -40,6 +41,7 @@ export interface DataDump {
 }
 
 export async function exportAll(): Promise<DataDump> {
+  await flushAll(); // pending model writes → kv, so the export is current
   const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv] =
     await Promise.all([
       db.events.toArray(),
@@ -91,6 +93,21 @@ function stripId<T extends Record<string, unknown>>(row: T): Omit<T, 'id'> {
   return rest;
 }
 
+// Bundles exported by pre-queue builds carry duplicate navigate/focus/blur
+// rows; drop them and flag the SW to rebuild derived aggregates from the
+// cleaned log (see db.ts v5 migration). Returns the number removed.
+async function dedupeAndFlagRebuild(): Promise<number> {
+  const dups = await findDuplicateEventIds(db.events);
+  if (dups.length) await db.events.bulkDelete(dups);
+  await db.kv.put({
+    key: MAINTENANCE_REBUILD_KEY,
+    value: { reason: 'import', removed: dups.length },
+    updatedAt: Date.now(),
+  });
+  return dups.length;
+}
+
+
 // Restore a full backup onto this device — the other half of migration that
 // was missing. Two modes:
 //
@@ -125,6 +142,7 @@ export async function importAll(
     return { ok: false, reason: 'not-augur-backup' };
   }
 
+  discardDirty();
   const tables = {
     events: dump.events ?? [],
     feedback: dump.feedback ?? [],
@@ -193,6 +211,8 @@ export async function importAll(
       },
     );
 
+    added.duplicatesRemoved = await dedupeAndFlagRebuild();
+    discardDirty();
     clearCleanupCaches();
     clearRecommendCaches();
     clearEmbeddingCache();
@@ -230,7 +250,9 @@ export async function importAll(
     },
   );
 
+  const duplicatesRemoved = await dedupeAndFlagRebuild();
   // Drop every in-memory cache so the SW reloads models from the imported kv.
+  discardDirty();
   clearCleanupCaches();
   clearRecommendCaches();
   clearEmbeddingCache();
@@ -241,9 +263,12 @@ export async function importAll(
 
   return {
     ok: true,
-    counts: Object.fromEntries(
-      Object.entries(tables).map(([k, v]) => [k, (v as unknown[]).length]),
-    ),
+    counts: {
+      ...Object.fromEntries(
+        Object.entries(tables).map(([k, v]) => [k, (v as unknown[]).length]),
+      ),
+      duplicatesRemoved,
+    },
   };
 }
 
@@ -259,6 +284,7 @@ export interface DebugBundleResult {
 }
 
 export async function exportDebugBundle(): Promise<DebugBundleResult> {
+  await flushAll();
   const [events, feedback, domains, cooccurrence, stash, workspaces, pins, kv, errorLog] =
     await Promise.all([
       db.events.toArray(),
@@ -361,6 +387,7 @@ predictions.
 }
 
 export async function resetModelsOnly(): Promise<void> {
+  discardDirty(); // stale in-memory copies must not be written back afterwards
   // Clear just the learned weights — keep raw events, domains, co-occurrence,
   // stash, workspaces. Useful when the user wants the models to retrain from
   // their existing event log without losing history.
@@ -383,6 +410,7 @@ export async function resetModelsOnly(): Promise<void> {
         k === 'lastAggregateAt',
     );
   await db.kv.bulkDelete(modelKeys);
+  discardDirty();
   clearCleanupCaches();
   clearRecommendCaches();
   clearEmbeddingCache();
@@ -393,6 +421,7 @@ export async function resetModelsOnly(): Promise<void> {
 }
 
 export async function wipeAll(): Promise<void> {
+  discardDirty(); // stale in-memory copies must not be written back afterwards
   await db.transaction(
     'rw',
     [
@@ -417,6 +446,7 @@ export async function wipeAll(): Promise<void> {
     },
   );
   // Also clear in-memory model + bandit caches so they reload as fresh.
+  discardDirty();
   clearCleanupCaches();
   clearRecommendCaches();
   clearEmbeddingCache();

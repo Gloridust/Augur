@@ -1,19 +1,19 @@
 import { db } from '../shared/db';
 import { SkipGramEmbedding } from './models/embedding';
 import { loadEmbedding, saveEmbedding } from './persistence';
+import { lazy } from './lazy';
 
 const MAX_STEPS_PER_BATCH = 8000;
 const SUBSAMPLE_THRESHOLD = 1.0;
 
-let cached: SkipGramEmbedding | null = null;
+const cache = lazy<SkipGramEmbedding>(() => loadEmbedding());
 
-export async function getEmbedding(): Promise<SkipGramEmbedding> {
-  if (!cached) cached = await loadEmbedding();
-  return cached;
+export function getEmbedding(): Promise<SkipGramEmbedding> {
+  return cache.get();
 }
 
 export function clearEmbeddingCache(): void {
-  cached = null;
+  cache.reset();
 }
 
 // Train batch from the cooccurrence table. The pair counts already encode
