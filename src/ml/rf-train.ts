@@ -203,6 +203,7 @@ export async function trainRecommendForest(): Promise<{
       const features = await buildRecommendFeatures({
         domain,
         context: { hour, dow, focusedDomain, openDomains },
+        stats, // already fetched above — skip the builder's re-fetch
         isCurrentlyOpen: false,
         isPinnedSomewhere: false,
         embedSimToFocused: embedSim,

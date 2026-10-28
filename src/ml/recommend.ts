@@ -414,6 +414,10 @@ export async function scoreOpenCandidates(
     const features = await buildRecommendFeatures({
       domain: stat.domain,
       context,
+      // `pool` was bulk-loaded (getTopDomainsByFrecency = 1 query) + augmented
+      // (blankStat fallback), so `stat` IS the DomainStats — pass it to skip a
+      // redundant per-candidate getDomainStats (up to ~120 IDB gets/scoring).
+      stats: stat,
       isCurrentlyOpen: openSet.has(stat.domain),
       isPinnedSomewhere: pinnedSet.has(stat.domain),
       embedSimToFocused: embedSim,

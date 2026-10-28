@@ -229,6 +229,12 @@ export async function buildRecommendFeatures(args: {
   factorizedTransition?: number;
   // ── v9: DIN target attention, default 0.5 = neutral ──
   dinAttention?: number;
+  // Pre-loaded domain stats. Callers that already hold the DomainStats row
+  // (scoreOpenCandidates loops a pool it bulk-loaded; rf-train fetches it for
+  // the embedSim) pass it here to skip a redundant per-candidate IndexedDB
+  // `getDomainStats` — ~120 fewer round-trips per scoring call. `undefined`
+  // = "not provided, fetch it"; explicit `null` = "known-absent, don't fetch".
+  stats?: DomainStats | null;
   now: number;
 }): Promise<RecommendFeatures> {
   const {
@@ -254,6 +260,7 @@ export async function buildRecommendFeatures(args: {
     titleSimToSession,
     factorizedTransition,
     dinAttention,
+    stats: statsArg,
     now,
   } = args;
   // Pack the v8+v9 additions once — identical in both return branches below.
@@ -273,7 +280,7 @@ export async function buildRecommendFeatures(args: {
   };
   const hourCyc = cyclic(context.hour, 24);
   const dowCyc = cyclic(context.dow, 7);
-  const stats = await getDomainStats(domain);
+  const stats = statsArg !== undefined ? statsArg : await getDomainStats(domain);
   if (!stats) {
     return {
       freqDecay: 0,
