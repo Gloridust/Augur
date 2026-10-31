@@ -329,7 +329,8 @@
       "replay": "replay implicit training",
       "forest": "retrain forest"
     },
-    "exportFailed": "Export failed — please try again."
+    "exportFailed": "Export failed — please try again.",
+    "swOutdated": "The background service is an older version than this page. Open chrome://extensions and click Reload on Augur (your data is kept)."
   },
   "debug": {
     "heads": "Prediction models",

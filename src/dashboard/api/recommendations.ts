@@ -14,6 +14,7 @@ import type {
 import { callRpc } from '../../shared/rpc';
 import type { InsightsBundle } from '../../ml/insights';
 import type { ModelInspection } from '../../ml/data-ops';
+import { CLEANUP_FEATURE_NAMES, RECOMMEND_FEATURE_NAMES } from '../../ml/features';
 import {
   backupFilename,
   buildDebugBundle,
@@ -117,35 +118,58 @@ export async function seedFromBrowserHistory(
 // exceed the 64 MiB runtime-message cap. The SW only flushes pending model
 // writes before a read and drops its caches around a write.
 
-function download(bytes: Uint8Array, filename: string, type: string): void {
-  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+function download(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
-  // Revoke on the next tick: some Chrome builds cancel a download whose
-  // object URL is revoked synchronously after click().
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // Revoke later: some Chrome builds cancel a download whose object URL is
+  // revoked synchronously after click(); large files need longer.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-async function flushSw(): Promise<{ cleanup: readonly string[]; recommend: readonly string[] }> {
-  const r = await callRpc({ kind: 'data.flush' });
-  if (!r.ok || r.kind !== 'data.flush') throw new Error('flush failed');
-  return r.data.featureNames;
+// Ask the SW to write pending model state before the page reads the tables.
+// Best effort: an export must never fail because of it — at most the last
+// few seconds of model updates are missing. (When the SW is still an older
+// build than this page — files replaced without reloading the extension —
+// it doesn't know data.flush, and every export failed.)
+async function flushSw(): Promise<{ swOutdated: boolean }> {
+  try {
+    const r = await Promise.race([
+      callRpc({ kind: 'data.flush' }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('flush timeout')), 5000)),
+    ]);
+    return { swOutdated: !(r.ok && r.kind === 'data.flush') };
+  } catch (err) {
+    console.warn('[augur] data.flush failed; exporting what is on disk', err);
+    // An older SW has no case for the request and answers nothing.
+    return { swOutdated: /empty response|unknown request/i.test(String(err)) };
+  }
 }
 
-export async function exportBackupFile(): Promise<{ size: number }> {
-  await flushSw();
-  const bytes = await encodeBackup(await readAllTables());
-  download(bytes, backupFilename(), 'application/gzip');
-  return { size: bytes.length };
+export interface ExportOutcome {
+  size: number;
+  // The service worker didn't recognise the request: it is an older build
+  // than this page (reload the extension).
+  swOutdated: boolean;
 }
 
-export async function exportDebugBundleFile(): Promise<{ size: number }> {
-  const featureNames = await flushSw();
-  const { filename, bytes } = await buildDebugBundle(featureNames);
-  download(bytes, filename, 'application/zip');
-  return { size: bytes.length };
+export async function exportBackupFile(): Promise<ExportOutcome> {
+  const { swOutdated } = await flushSw();
+  const blob = await encodeBackup(await readAllTables());
+  download(blob, backupFilename());
+  return { size: blob.size, swOutdated };
+}
+
+export async function exportDebugBundleFile(): Promise<ExportOutcome> {
+  const { swOutdated } = await flushSw();
+  const { filename, blob } = await buildDebugBundle({
+    cleanup: CLEANUP_FEATURE_NAMES,
+    recommend: RECOMMEND_FEATURE_NAMES,
+  });
+  download(blob, filename);
+  return { size: blob.size, swOutdated };
 }
 
 export type ImportOutcome =

@@ -343,6 +343,9 @@ async function handle(req: RpcRequest): Promise<RpcResponse> {
         return { ok: true, kind: 'ack' };
       }
     }
+    // A page newer than this worker (files replaced, extension not
+    // reloaded) — say so instead of answering nothing.
+    return { ok: false, error: `unknown request: ${(req as { kind: string }).kind}` };
   } catch (err) {
     // Persist the failure (with the RPC kind) so it shows up in the debug
     // bundle — not just in the caller's one-off error string.

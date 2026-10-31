@@ -62,6 +62,7 @@ export type EventType =
   | 'cleanup_card_shown'
   | 'smart_cleanup_shown'
   | 'smart_cleanup_committed'
+  | 'export_failed'
   | 'search_executed'
   | 'tab_filter_typed';
 

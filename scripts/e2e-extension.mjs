@@ -116,13 +116,41 @@ try {
 
   if (process.env.E2E_DEBUG) await send('Runtime.enable', {}, swS);
   const swEval = (code) => evaluate(swS, `(async () => { ${code} })()`);
+  // Read-only probes: never create the database (a raw open would make an
+  // empty v1 'augur' before the extension's own schema), never keep it open.
   const idb = `
-    const db = await new Promise((res, rej) => { const r = indexedDB.open('augur'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
-    const all = (store) => new Promise((res) => { const q = db.transaction(store).objectStore(store).getAll(); q.onsuccess = () => res(q.result); });
+    const all = async (store) => {
+      if (!(await indexedDB.databases()).some((d) => d.name === 'augur')) return [];
+      const db = await new Promise((res, rej) => { const r = indexedDB.open('augur'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+      try {
+        if (!db.objectStoreNames.contains(store)) return [];
+        return await new Promise((res) => { const q = db.transaction(store).objectStore(store).getAll(); q.onsuccess = () => res(q.result); });
+      } finally { db.close(); }
+    };
   `;
 
+  // Wait until the SW has processed everything so far: the event count
+  // stops changing (fixed sleeps were flaky on a loaded machine).
+  const eventCount = () => swEval(`${idb} return (await all('events')).length;`);
+  const settle = async (quietMs = 1200, maxMs = 30_000) => {
+    const t0 = Date.now();
+    let last = await eventCount();
+    let since = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      await sleep(300);
+      const n = await eventCount();
+      if (n !== last) { last = n; since = Date.now(); }
+      else if (Date.now() - since >= quietMs) return n;
+    }
+    return last;
+  };
+
   // ── 2. Browse like a person: a habit loop over several hosts ─────────
-  const open = async (u) => (await send('Target.createTarget', { url: u })).targetId;
+  const open = async (u) => {
+    const { targetId } = await send('Target.createTarget', { url: u });
+    await settle(600);
+    return targetId;
+  };
   const hosts = ['github', 'linear', 'mail', 'figma', 'docs', 'news'];
   const ids = {};
   for (const h of hosts) {
@@ -133,17 +161,17 @@ try {
   for (let round = 0; round < 3; round++) {
     for (const h of ['github', 'linear', 'github', 'docs', 'mail']) {
       await send('Target.activateTarget', { targetId: ids[h] });
-      await sleep(250);
+      await settle(300);
     }
   }
   const { sessionId: ghS } = await send('Target.attachToTarget', { targetId: ids.github, flatten: true });
   await send('Page.navigate', { url: url('github', '/pulls') }, ghS); // same-site route: not a visit
-  await sleep(500);
+  await settle(600);
   await send('Page.navigate', { url: url('stackoverflow', '/q/1') }, ghS); // cross-site: a visit
-  await sleep(500);
+  await settle(600);
   await send('Target.closeTarget', { targetId: ids.news });
   await send('Target.closeTarget', { targetId: ids.figma });
-  await sleep(500);
+  await settle(600);
   // Re-open a closed site: a genuine switch-open the open head trains on.
   ids.figma = await open(url('figma', '/file/2'));
   await sleep(800);
@@ -154,12 +182,12 @@ try {
   // the negatives they're ranked against.
   for (const h of ['wiki', 'maps', 'music']) {
     await send('Target.activateTarget', { targetId: ids.docs });
-    await sleep(300);
+    await settle(300);
     ids[h] = await open(url(h, '/'));
     await sleep(700);
   }
-  // Let the serial queue drain, then write pending model state.
-  await sleep(1500);
+  // Let the serial queue drain completely.
+  await settle(2000);
 
   // ── 3. Capture ───────────────────────────────────────────────────────
   const cap = await swEval(`${idb}
@@ -240,6 +268,37 @@ try {
   check('open domains are never suggested', Array.isArray(pred.open) && pred.open.every((s) => !openSet.includes(s.split(' ')[0])), `open: ${openSet.join(', ')}`);
   check('cleanup sweep sees the open tabs', typeof pred.cleanup === 'number' && pred.cleanup >= 6, `${pred.cleanup} tabs`);
   check('data.flush + model.evaluate RPCs', pred.flush === true && pred.evalOk === true, `evaluated=${pred.evaluated}`);
+
+  // ── 6. Export + debug bundle through the real Settings UI ────────────
+  await send('Runtime.enable', {}, dS);
+  const ui = await evaluate(dS, `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const got = [];
+    const orig = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (b) => { got.push(b); return orig(b); };
+    HTMLAnchorElement.prototype.click = function () { got.push(this.download); };
+    const errs = [];
+    const oe = console.error.bind(console);
+    console.error = (...a) => { errs.push(a.map((x) => (x && x.stack) || String(x)).join(' ')); oe(...a); };
+    const byText = (re) => [...document.querySelectorAll('button,[role=tab]')].find((b) => re.test(b.textContent || ''));
+    document.querySelector('button[aria-label="Settings"]')?.click();
+    await sleep(500);
+    byText(/Data/)?.click();
+    await sleep(500);
+    const toasts = () => [...document.querySelectorAll('[role=alert]')].map((t) => t.textContent);
+    byText(/Export all data/)?.click();
+    await sleep(2500);
+    const afterExport = { files: got.filter((x) => typeof x === 'string'), blobBytes: got.filter((x) => x instanceof Blob).map((b) => b.size), toasts: toasts() };
+    got.length = 0;
+    byText(/Developer bundle/)?.click();
+    await sleep(2500);
+    const afterBundle = { files: got.filter((x) => typeof x === 'string'), blobBytes: got.filter((x) => x instanceof Blob).map((b) => b.size), toasts: toasts() };
+    return { afterExport, afterBundle, errs };
+  })()`);
+  const exportOk = ui.afterExport.files.some((f) => /augur-backup-.*\.json\.gz$/.test(f));
+  check('Settings → Export downloads a backup', exportOk, JSON.stringify(exportOk ? ui.afterExport.files : ui));
+  const bundleOk = ui.afterBundle.files.some((f) => /augur-debug-.*\.zip$/.test(f));
+  check('Settings → Developer bundle downloads a zip', bundleOk, JSON.stringify(bundleOk ? ui.afterBundle.files : ui));
 
   exitCode = results.every((r) => r.ok) ? 0 : 1;
 } catch (err) {

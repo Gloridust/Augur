@@ -329,7 +329,8 @@
       "replay": "重放隐式训练",
       "forest": "重训随机森林"
     },
-    "exportFailed": "导出失败，请重试。"
+    "exportFailed": "导出失败，请重试。",
+    "swOutdated": "后台服务的版本比当前页面旧。请打开 chrome://extensions，在 Augur 上点「重新加载」（数据不会丢失）。"
   },
   "debug": {
     "heads": "预测模型",

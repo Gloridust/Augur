@@ -11,10 +11,6 @@
 //
 // References: PKWARE APPNOTE.TXT.
 
-export interface ZipInput {
-  name: string;
-  data: Uint8Array;
-}
 
 let crcTable: Uint32Array | null = null;
 function crc32(bytes: Uint8Array): number {
@@ -64,73 +60,103 @@ function r32(b: Uint8Array, p: number): number {
   return (r16(b, p) | (r16(b, p + 2) << 16)) >>> 0;
 }
 
-export async function writeZip(entries: ZipInput[], when = new Date()): Promise<Uint8Array> {
+// Streams a Blob through a (de)compressor without materializing the input
+// as one array — the event log of a heavy user is large.
+async function pipeBlob(blob: Blob, stream: CompressionStream | DecompressionStream): Promise<Blob> {
+  return new Response(blob.stream().pipeThrough(stream)).blob();
+}
+
+export const gzipBlob = (b: Blob) => pipeBlob(b, new CompressionStream('gzip'));
+
+async function crc32Blob(blob: Blob): Promise<number> {
+  let crc = 0xffffffff;
+  crc32(new Uint8Array(0)); // build the table
+  const reader = blob.stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (let i = 0; i < value.length; i++) crc = crcTable![(crc ^ value[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Entries may be Blobs (built from many small JSON chunks); the archive comes
+// back as a Blob of header arrays + compressed bodies, so no single buffer
+// ever holds the whole bundle.
+export async function writeZip(
+  entries: Array<{ name: string; data: Uint8Array | Blob }>,
+  when = new Date(),
+): Promise<Blob> {
   const dosTime = (when.getHours() << 11) | (when.getMinutes() << 5) | Math.floor(when.getSeconds() / 2);
   const dosDate = ((when.getFullYear() - 1980) << 9) | ((when.getMonth() + 1) << 5) | when.getDate();
   const FLAGS = 0x0800; // UTF-8 names
   const enc = new TextEncoder();
 
-  const items = await Promise.all(
-    entries.map(async (e) => {
-      const deflated = await deflateRaw(e.data);
-      // Tiny files can grow under DEFLATE; store those as-is.
-      const store = deflated.length >= e.data.length;
-      return {
-        name: enc.encode(e.name),
-        method: store ? 0 : 8,
-        body: store ? e.data : deflated,
-        size: e.data.length,
-        crc: crc32(e.data),
-      };
-    }),
-  );
+  const items: Array<{ name: Uint8Array; method: number; body: Blob; size: number; crc: number }> = [];
+  for (const e of entries) {
+    const data = e.data instanceof Blob ? e.data : new Blob([e.data as BlobPart]);
+    const deflated = await pipeBlob(data, new CompressionStream('deflate-raw'));
+    // Tiny files can grow under DEFLATE; store those as-is.
+    const store = deflated.size >= data.size;
+    items.push({
+      name: enc.encode(e.name),
+      method: store ? 0 : 8,
+      body: store ? data : deflated,
+      size: data.size,
+      crc: await crc32Blob(data),
+    });
+  }
 
-  const total =
-    items.reduce((s, it) => s + 30 + it.name.length + it.body.length + 46 + it.name.length, 0) + 22;
-  const out = new Uint8Array(total);
+  const parts: BlobPart[] = [];
   const offsets: number[] = [];
   let p = 0;
   for (const it of items) {
     offsets.push(p);
-    w32(out, p, SIG_LFH);
-    w16(out, p + 4, 20);
-    w16(out, p + 6, FLAGS);
-    w16(out, p + 8, it.method);
-    w16(out, p + 10, dosTime);
-    w16(out, p + 12, dosDate);
-    w32(out, p + 14, it.crc);
-    w32(out, p + 18, it.body.length);
-    w32(out, p + 22, it.size);
-    w16(out, p + 26, it.name.length);
-    w16(out, p + 28, 0);
-    out.set(it.name, p + 30);
-    out.set(it.body, p + 30 + it.name.length);
-    p += 30 + it.name.length + it.body.length;
+    const h = new Uint8Array(30 + it.name.length);
+    w32(h, 0, SIG_LFH);
+    w16(h, 4, 20);
+    w16(h, 6, FLAGS);
+    w16(h, 8, it.method);
+    w16(h, 10, dosTime);
+    w16(h, 12, dosDate);
+    w32(h, 14, it.crc);
+    w32(h, 18, it.body.size);
+    w32(h, 22, it.size);
+    w16(h, 26, it.name.length);
+    w16(h, 28, 0);
+    h.set(it.name, 30);
+    parts.push(h, it.body);
+    p += h.length + it.body.size;
   }
   const cdStart = p;
+  let cdSize = 0;
   items.forEach((it, i) => {
-    w32(out, p, SIG_CDH);
-    w16(out, p + 4, 20);
-    w16(out, p + 6, 20);
-    w16(out, p + 8, FLAGS);
-    w16(out, p + 10, it.method);
-    w16(out, p + 12, dosTime);
-    w16(out, p + 14, dosDate);
-    w32(out, p + 16, it.crc);
-    w32(out, p + 20, it.body.length);
-    w32(out, p + 24, it.size);
-    w16(out, p + 28, it.name.length);
+    const c = new Uint8Array(46 + it.name.length);
+    w32(c, 0, SIG_CDH);
+    w16(c, 4, 20);
+    w16(c, 6, 20);
+    w16(c, 8, FLAGS);
+    w16(c, 10, it.method);
+    w16(c, 12, dosTime);
+    w16(c, 14, dosDate);
+    w32(c, 16, it.crc);
+    w32(c, 20, it.body.size);
+    w32(c, 24, it.size);
+    w16(c, 28, it.name.length);
     // extra, comment, disk, internal attrs, external attrs: all zero
-    w32(out, p + 42, offsets[i]);
-    out.set(it.name, p + 46);
-    p += 46 + it.name.length;
+    w32(c, 42, offsets[i]);
+    c.set(it.name, 46);
+    parts.push(c);
+    cdSize += c.length;
   });
-  w32(out, p, SIG_EOCD);
-  w16(out, p + 8, items.length);
-  w16(out, p + 10, items.length);
-  w32(out, p + 12, p - cdStart);
-  w32(out, p + 16, cdStart);
-  return out;
+  const eocd = new Uint8Array(22);
+  w32(eocd, 0, SIG_EOCD);
+  w16(eocd, 8, items.length);
+  w16(eocd, 10, items.length);
+  w32(eocd, 12, cdSize);
+  w32(eocd, 16, cdStart);
+  parts.push(eocd);
+  return new Blob(parts, { type: 'application/zip' });
 }
 
 export function isZip(b: Uint8Array): boolean {

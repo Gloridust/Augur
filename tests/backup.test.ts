@@ -13,14 +13,25 @@ describe('zip', () => {
     const { readZip, writeZip } = await import('../src/shared/zip');
     const big = new TextEncoder().encode(JSON.stringify(Array.from({ length: 5000 }, (_, i) => ({ i, url: 'https://a.com/' }))));
     const tiny = new TextEncoder().encode('{}');
-    const zip = await writeZip([
+    const zip = new Uint8Array(await (await writeZip([
       { name: 'big.json', data: big },
-      { name: 'tiny.json', data: tiny },
-    ]);
+      { name: 'tiny.json', data: new Blob([tiny]) },
+    ])).arrayBuffer());
     expect(zip.length).toBeLessThan(big.length / 5); // actually compressed
     const out = await readZip(zip);
     expect(out.get('big.json')).toEqual(big);
     expect(out.get('tiny.json')).toEqual(tiny);
+  });
+});
+
+describe('chunked JSON', () => {
+  it('jsonBlob matches JSON.stringify across chunk boundaries and skipped fields', async () => {
+    const { jsonBlob } = await import('../src/shared/backup');
+    const rows = Array.from({ length: 4501 }, (_, i) => ({ i, s: `"q"${i}`, u: i % 2 ? undefined : null }));
+    const obj = { a: undefined, events: rows, empty: [], n: 3, nested: { x: [1, 2] } };
+    for (const v of [rows, [], obj, 5, 'x']) {
+      expect(JSON.parse(await jsonBlob(v).text())).toEqual(JSON.parse(JSON.stringify(v)));
+    }
   });
 });
 
@@ -37,7 +48,7 @@ describe('backup files', () => {
     await w.db.pins.add({ key: 'https://a.com/', url: 'https://a.com/', title: 'A', domain: 'a.com', pinnedAt: t, manualOrder: 0 });
 
     const dump = await readAllTables();
-    const gz = await encodeBackup(dump);
+    const gz = new Uint8Array(await (await encodeBackup(dump)).arrayBuffer());
     expect(gz[0]).toBe(0x1f);
     const parsed = await parseBackupFile(gz);
     expect(parsed.kind).toBe('backup');
@@ -62,11 +73,14 @@ describe('backup files', () => {
       ev({ type: 'open', ts: t, tabId: 1, url: 'https://a.com/', domain: 'a.com' }),
       ev({ type: 'open', ts: t + 60_000, tabId: 2, url: 'https://b.com/', domain: 'b.com' }),
     ]);
-    const { bytes } = await buildDebugBundle({ cleanup: ['x'], recommend: ['y'] });
+    const { blob } = await buildDebugBundle({ cleanup: ['x'], recommend: ['y'] });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
 
     // Simulate Finder: unzip → folder → re-zip.
     const entries = await readZip(bytes);
-    const rezipped = await writeZip([...entries].map(([name, data]) => ({ name: `augur-debug/${name}`, data })));
+    const rezipped = new Uint8Array(
+      await (await writeZip([...entries].map(([name, data]) => ({ name: `augur-debug/${name}`, data })))).arrayBuffer(),
+    );
 
     const parsed = await parseBackupFile(rezipped);
     expect(parsed.kind).toBe('bundle');

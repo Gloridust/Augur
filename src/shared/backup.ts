@@ -12,7 +12,7 @@
 
 import { db, findDuplicateEventIds, MAINTENANCE_REBUILD_KEY } from './db';
 import { loadErrorLog } from './errorlog';
-import { gunzip, gzip, isGzip, isZip, readZip, writeZip } from './zip';
+import { gunzip, gzipBlob, isGzip, isZip, readZip, writeZip } from './zip';
 
 // The complete, restorable snapshot — this IS the backup AND the
 // device-migration file. It carries everything that makes an Augur install
@@ -227,10 +227,44 @@ export function backupFilename(now = new Date()): string {
   return `augur-backup-${localStamp(now, false)}.json.gz`;
 }
 
-// Backup file = gzip(JSON(DataDump)). Plain .json backups from older
-// versions are still accepted by parseBackupFile.
-export async function encodeBackup(dump: DataDump): Promise<Uint8Array> {
-  return gzip(new TextEncoder().encode(JSON.stringify(dump)));
+// JSON as a Blob built from row chunks. JSON.stringify of a whole event log
+// builds one string, which on a long history can pass V8's string-length
+// cap ("Invalid string length") and needs that memory twice over; chunks of
+// a few thousand rows never do.
+const JSON_CHUNK_ROWS = 2000;
+
+function jsonArrayParts(rows: unknown[]): BlobPart[] {
+  if (rows.length === 0) return ['[]'];
+  const parts: BlobPart[] = ['['];
+  for (let i = 0; i < rows.length; i += JSON_CHUNK_ROWS) {
+    const chunk = JSON.stringify(rows.slice(i, i + JSON_CHUNK_ROWS));
+    parts.push((i > 0 ? ',' : '') + chunk.slice(1, -1));
+  }
+  parts.push(']');
+  return parts;
+}
+
+export function jsonBlob(value: unknown): Blob {
+  if (Array.isArray(value)) return new Blob(jsonArrayParts(value), { type: 'application/json' });
+  if (value && typeof value === 'object') {
+    const parts: BlobPart[] = ['{'];
+    let first = true;
+    Object.entries(value).forEach(([k, v]) => {
+      if (v === undefined) return;
+      parts.push(`${first ? '' : ','}${JSON.stringify(k)}:`);
+      first = false;
+      parts.push(...(Array.isArray(v) ? jsonArrayParts(v) : [JSON.stringify(v)]));
+    });
+    parts.push('}');
+    return new Blob(parts, { type: 'application/json' });
+  }
+  return new Blob([JSON.stringify(value)], { type: 'application/json' });
+}
+
+// Backup file = gzip(JSON(DataDump)), streamed. Plain .json backups from
+// older versions are still accepted by parseBackupFile.
+export async function encodeBackup(dump: DataDump): Promise<Blob> {
+  return gzipBlob(jsonBlob(dump));
 }
 
 export type ParsedBackup =
@@ -327,7 +361,7 @@ offline to debug specific predictions.
 
 export async function buildDebugBundle(
   featureNames: { cleanup: readonly string[]; recommend: readonly string[] },
-): Promise<{ filename: string; bytes: Uint8Array }> {
+): Promise<{ filename: string; blob: Blob }> {
   const [dump, errorLog] = await Promise.all([readAllTables(), loadErrorLog()]);
   const exportedAt = dump.exportedAt;
   const manifest = {
@@ -347,10 +381,9 @@ export async function buildDebugBundle(
     },
     featureNames,
   };
-  // Compact JSON: the bundle is DEFLATEd anyway, and pretty-printing a
-  // 100k-row event log doubles the work for no reader benefit.
-  const enc = (obj: unknown) => new TextEncoder().encode(JSON.stringify(obj));
-  const bytes = await writeZip(
+  // Compact, chunked JSON (see jsonBlob): the bundle is DEFLATEd anyway.
+  const enc = jsonBlob;
+  const blob = await writeZip(
     [
       { name: 'MANIFEST.json', data: new TextEncoder().encode(JSON.stringify(manifest, null, 2)) },
       { name: 'SCHEMA.md', data: new TextEncoder().encode(BUNDLE_SCHEMA) },
@@ -367,5 +400,5 @@ export async function buildDebugBundle(
     new Date(exportedAt),
   );
   const stamp = localStamp(new Date(exportedAt), true);
-  return { filename: `augur-debug-${stamp}.zip`, bytes };
+  return { filename: `augur-debug-${stamp}.zip`, blob };
 }

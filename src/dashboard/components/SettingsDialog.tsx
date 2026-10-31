@@ -31,6 +31,7 @@ import { SUPPORTED_LANGUAGES, type SupportedLanguage } from '../i18n';
 import {
   exportBackupFile,
   exportDebugBundleFile,
+  logUiEvent,
   importBackupFile,
   rebuildAggregates,
   rebuildSequenceMemory,
@@ -157,12 +158,21 @@ export function SettingsDialog({ open, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<'general' | 'ai' | 'data' | 'advanced'>('general');
 
+  const reportExportError = (err: unknown) => {
+    console.error('[augur] export failed', err);
+    logUiEvent({ type: 'export_failed', meta: { message: String(err).slice(0, 300) } });
+    toast({ message: `${t('settings.exportFailed')} (${String(err).slice(0, 120)})`, severity: 'error' });
+  };
+  const warnIfSwOutdated = (r: { swOutdated: boolean }) => {
+    if (r.swOutdated) toast({ message: t('settings.swOutdated'), severity: 'warning' });
+  };
+
   const onExport = async () => {
     setBusy(true);
     try {
-      await exportBackupFile();
-    } catch {
-      toast({ message: t('settings.exportFailed'), severity: 'error' });
+      warnIfSwOutdated(await exportBackupFile());
+    } catch (err) {
+      reportExportError(err);
     } finally {
       setBusy(false);
     }
@@ -230,13 +240,14 @@ export function SettingsDialog({ open, onClose }: Props) {
   const onExportDebug = async () => {
     setBusy(true);
     try {
-      const { size } = await exportDebugBundleFile();
+      const r = await exportDebugBundleFile();
+      warnIfSwOutdated(r);
       toast({
-        message: t('settings.debugExportDone', { size: (size / 1024).toFixed(0) }),
+        message: t('settings.debugExportDone', { size: (r.size / 1024).toFixed(0) }),
         severity: 'success',
       });
-    } catch {
-      toast({ message: t('settings.debugExportFailed'), severity: 'error' });
+    } catch (err) {
+      reportExportError(err);
     } finally {
       setBusy(false);
     }
