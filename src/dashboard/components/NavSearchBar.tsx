@@ -287,7 +287,7 @@ export function NavSearchBar({ variant = 'nav' }: Props) {
     <Box
       ref={containerRef}
       sx={{
-        width: hero ? { xs: '100%', sm: 560, md: 640 } : { xs: 220, sm: 320, md: 440, lg: 520 },
+        width: hero ? { xs: '100%', sm: 560, md: 640 } : { xs: '100%', sm: 320, md: 440, lg: 520 },
         maxWidth: '100%',
         position: 'relative',
       }}
@@ -403,6 +403,7 @@ export function NavSearchBar({ variant = 'nav' }: Props) {
               <Box
                 component="kbd"
                 sx={{
+                  display: { xs: 'none', sm: 'block' },
                   fontFamily: 'inherit',
                   fontSize: 11,
                   px: 0.75,

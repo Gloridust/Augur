@@ -46,7 +46,7 @@ export function Insights() {
   if (!data) {
     return (
       <Box>
-        <Typography variant="h5" sx={{ mb: 2 }}>
+        <Typography variant="h6" sx={{ fontWeight: 500, mb: 2 }}>
           {t('sections.insights')}
         </Typography>
         <Skeleton variant="rounded" height={220} sx={{ borderRadius: 4 }} />
@@ -62,7 +62,7 @@ export function Insights() {
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-        <Typography variant="h5">{t('sections.insights')}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 500 }}>{t('sections.insights')}</Typography>
         <Typography variant="body2" color="text.secondary">
           {t('insights.totalFocus', { hours: (data.totals.focusMinutesLast30d / 60).toFixed(1) })}
           {' · '}

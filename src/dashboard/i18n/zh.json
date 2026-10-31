@@ -98,12 +98,13 @@
     "menu": "工作区操作"
   },
   "today": {
-    "tabsOpened": "今日打开标签",
-    "domainsVisited": "今日访问域名",
-    "focusMinutes": "今日专注",
-    "topDomain": "今日 Top 域名",
+    "tabsOpened": "个标签",
+    "domainsVisited": "个网站",
+    "focusMinutes": "专注",
+    "topDomain": "最常用",
     "topDomainHint": "专注 {{minutes}} 分钟",
-    "busiestHour": "最忙时段"
+    "busiestHour": "最忙",
+    "title": "今日概览"
   },
   "learning": {
     "progress": "学习进度",

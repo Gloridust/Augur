@@ -255,11 +255,11 @@ export function OracleHint() {
         transformOrigin: '50% 0',
         animation: closing
           ? 'augur-island-out 200ms cubic-bezier(0.4, 0, 1, 1) forwards'
-          : 'augur-island-in 440ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+          : 'augur-island-in 440ms cubic-bezier(0.16, 1, 0.3, 1)',
         '@keyframes augur-island-in': {
           '0%': {
             opacity: 0,
-            transform: 'translate(-50%, -18px) scale(0.78)',
+            transform: 'translate(-50%, -12px) scale(0.92)',
           },
           '60%': {
             opacity: 1,
@@ -298,7 +298,7 @@ export function OracleHint() {
               borderRadius: 999,
               cursor: 'pointer',
               transition:
-                'background-color 280ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 280ms ease, transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1), max-width 280ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+                'background-color 280ms cubic-bezier(0.16, 1, 0.3, 1), opacity 280ms ease, transform 280ms cubic-bezier(0.16, 1, 0.3, 1), max-width 280ms cubic-bezier(0.16, 1, 0.3, 1)',
               opacity: isSelected ? 1 : 0.55,
               transform: isSelected ? 'scale(1.06)' : 'scale(1)',
               backgroundColor: isSelected

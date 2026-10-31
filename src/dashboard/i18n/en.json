@@ -98,12 +98,13 @@
     "menu": "Workspace actions"
   },
   "today": {
-    "tabsOpened": "Tabs opened today",
-    "domainsVisited": "Domains today",
-    "focusMinutes": "Focus today",
-    "topDomain": "Top domain today",
+    "tabsOpened": "tabs opened",
+    "domainsVisited": "domains",
+    "focusMinutes": "focused",
+    "topDomain": "most used",
     "topDomainHint": "{{minutes}} min of focus",
-    "busiestHour": "Busiest hour"
+    "busiestHour": "busiest hour",
+    "title": "Today's activity"
   },
   "learning": {
     "progress": "Learning progress",

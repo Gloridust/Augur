@@ -55,6 +55,12 @@ Nothing leaves your browser. Ever. · 没有任何数据离开浏览器，永远
 - **Cross-tab synced** via `chrome.storage.session` — open Augur in two tabs and they share the same conversation in real time, streaming text appears in both. · **跨标签同步**：用 `chrome.storage.session` 存储，开两个 Augur 标签会共享同一段对话，回答流式生成时两边都能看到字一个个出来。
 - Auto-clears after 30 minutes of inactivity (timer anchored to `lastActivity` in storage), or click the refresh icon for an immediate wipe. Stop button aborts an in-flight stream. · 30 分钟无新消息自动清空（基于存储中的 `lastActivity`），也可点刷新图标手动清。流式回答中可点停止。
 
+### ⌨️ Launcher · 搜索面板
+
+- **One box for tabs, history and the web.** ⌘K on the page, or **⌘⇧K / Ctrl+Shift+K from any page** (rebind at `chrome://extensions/shortcuts`). Matches open tabs (Enter switches to it), pins and the last 90 days of history by title, URL or domain — and Chinese titles by **pinyin initials** (`gzzb` → 工作周报). · **一个框搜标签、历史和网页**：页面内 ⌘K，或在**任意网页按 ⌘⇧K / Ctrl+Shift+K**（可在 `chrome://extensions/shortcuts` 改键）。按标题、网址、域名匹配已打开标签（回车直接切过去）、置顶和近 90 天历史，中文标题支持**拼音首字母**（`gzzb` → 工作周报）。
+- **Site search:** type a keyword and press Tab — `gh` GitHub, `so` Stack Overflow, `npm`, `mdn`, `yt` YouTube, `bili` 哔哩哔哩, `zh` 知乎, `wiki`, `bd` 百度. · **站内搜**：输入简写后按 Tab 直达站内搜索。
+- **Zen mode:** `/zen` or the leaf button — just the brand and the launcher. · **Zen 模式**：输入 `/zen` 或点叶子按钮，只留品牌和搜索框。
+
 ### 🗂 Tab management · 标签管理
 
 - **Group by domain or by window** with deterministic per-window color stripes. · **按域名或按窗口分组**，每个窗口有稳定的颜色条。

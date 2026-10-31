@@ -122,6 +122,14 @@ export const theme = extendTheme({
     caption: { fontSize: '0.75rem', lineHeight: 1.4 },
   },
   components: {
+    // Heading semantics: the greeting is the page's <h1>; section titles
+    // (h6 style) are <h2>; card titles (subtitle1 style) are <h3>. MUI's
+    // default maps both to <h6>, which gave screen readers a broken outline.
+    MuiTypography: {
+      defaultProps: {
+        variantMapping: { h6: 'h2', subtitle1: 'h3', subtitle2: 'p' },
+      },
+    },
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {

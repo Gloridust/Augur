@@ -246,7 +246,7 @@ export function WorkspacesSection() {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}>
         <LayersIcon sx={{ color: 'text.secondary' }} />
-        <Typography variant="h5">{t('sections.workspaces')}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 500 }}>{t('sections.workspaces')}</Typography>
         {items.length > 0 && <Chip label={items.length} size="small" />}
         <Box sx={{ flex: 1 }} />
         <Button

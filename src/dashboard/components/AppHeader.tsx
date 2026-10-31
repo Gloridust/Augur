@@ -49,6 +49,7 @@ export function AppHeader({ onOpenSettings }: Props) {
             component="span"
             sx={{
               fontFamily: '"Italiana", "Iowan Old Style", Georgia, serif',
+              display: { xs: 'none', sm: 'inline' },
               fontSize: { xs: 24, md: 28 },
               lineHeight: 1,
               letterSpacing: '0.06em',
@@ -60,10 +61,13 @@ export function AppHeader({ onOpenSettings }: Props) {
           </Typography>
         </Box>
 
-        {/* Spacer pushes search + settings to the right. */}
-        <Box sx={{ flex: 1 }} />
+        {/* Spacer pushes search + settings to the right; on narrow windows
+            the search itself takes the free space instead. */}
+        <Box sx={{ flex: 1, display: { xs: 'none', sm: 'block' } }} />
 
-        <NavSearchBar />
+        <Box sx={{ flex: { xs: 1, sm: '0 1 auto' }, minWidth: 0, display: 'flex', justifyContent: 'flex-end' }}>
+          <NavSearchBar />
+        </Box>
 
         {showAssistant && <AiAssistant />}
 

@@ -1,57 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Box, Stack, Typography } from '@mui/material';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import LanguageIcon from '@mui/icons-material/Language';
-import HourglassTopIcon from '@mui/icons-material/HourglassTop';
-import StarIcon from '@mui/icons-material/Star';
+import { Box } from '@mui/material';
 import type { TodayRecap as TodayRecapData } from '../../shared/types';
 import { fetchTodayRecap } from '../api/recommendations';
 import { visiblePoll } from '../liveRefresh';
 
-interface StatProps {
-  icon: React.ReactNode;
-  value: string | number;
-  label: string;
-  hint?: string;
-}
-
-function Stat({ icon, value, label, hint }: StatProps) {
+// One quiet line of today's numbers. It used to be five icon-in-a-circle
+// stat tiles — the hero-metric template, louder than anything else on a
+// page whose job is getting you to the next tab.
+function Stat({ value, label, hint }: { value: string | number; label: string; hint?: string }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-      <Box
-        aria-hidden
-        sx={{
-          width: 36,
-          height: 36,
-          borderRadius: '50%',
-          flexShrink: 0,
-          display: 'grid',
-          placeItems: 'center',
-          backgroundColor: 'var(--mui-palette-primary-light)',
-          color: 'var(--mui-palette-primary-dark)',
-        }}
-      >
-        {icon}
+    <Box component="span" title={hint} sx={{ whiteSpace: 'nowrap' }}>
+      <Box component="span" className="augur-num" sx={{ fontWeight: 600, color: 'text.primary', mr: 0.5 }}>
+        {value}
       </Box>
-      <Box sx={{ minWidth: 0 }}>
-        <Typography variant="h6" sx={{ fontWeight: 500, lineHeight: 1.1 }}>
-          {value}
-        </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{
-            display: 'block',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          title={hint}
-        >
-          {label}
-        </Typography>
-      </Box>
+      {label}
     </Box>
   );
 }
@@ -91,45 +54,26 @@ export function TodayRecap() {
     : '—';
 
   return (
-    <Stack
-      direction="row"
-      spacing={{ xs: 2.5, md: 4 }}
-      useFlexGap
-      flexWrap="wrap"
+    <Box
+      component="p"
+      aria-label={t('today.title')}
       sx={{
+        m: 0,
         px: 0.5,
-        // Sit on the right of the hero row (the parent grid puts us in the
-        // 1fr column next to the Greeting). Items wrap onto new lines on
-        // narrow screens, but stay right-aligned.
-        justifyContent: 'flex-end',
+        display: 'flex',
+        flexWrap: 'wrap',
+        columnGap: 2.5,
+        rowGap: 0.5,
+        justifyContent: { xs: 'flex-start', md: 'flex-end' },
+        fontSize: 13.5,
+        color: 'text.secondary',
       }}
     >
-      <Stat
-        icon={<OpenInNewIcon fontSize="small" />}
-        value={data.tabsOpened}
-        label={t('today.tabsOpened')}
-      />
-      <Stat
-        icon={<LanguageIcon fontSize="small" />}
-        value={data.domainsVisited}
-        label={t('today.domainsVisited')}
-      />
-      <Stat
-        icon={<HourglassTopIcon fontSize="small" />}
-        value={`${data.focusMinutes}m`}
-        label={t('today.focusMinutes')}
-      />
-      <Stat
-        icon={<StarIcon fontSize="small" />}
-        value={top.value}
-        label={t('today.topDomain')}
-        hint={top.hint}
-      />
-      <Stat
-        icon={<HourglassTopIcon fontSize="small" />}
-        value={busy}
-        label={t('today.busiestHour')}
-      />
-    </Stack>
+      <Stat value={data.tabsOpened} label={t('today.tabsOpened')} />
+      <Stat value={data.domainsVisited} label={t('today.domainsVisited')} />
+      <Stat value={`${data.focusMinutes}m`} label={t('today.focusMinutes')} />
+      {data.topDomain && <Stat value={top.value} label={t('today.topDomain')} hint={top.hint} />}
+      {data.busiestHour && <Stat value={busy} label={t('today.busiestHour')} />}
+    </Box>
   );
 }

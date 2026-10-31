@@ -95,7 +95,7 @@ export function StashSection() {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 2, gap: 1, flexWrap: 'wrap' }}>
         <InventoryIcon sx={{ color: 'text.secondary' }} />
-        <Typography variant="h5">{t('sections.stash')}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 500 }}>{t('sections.stash')}</Typography>
         <Chip label={items.length} size="small" />
         <Box sx={{ flex: 1 }} />
         <Button onClick={onOpenAll} variant="outlined" disabled={busy}>

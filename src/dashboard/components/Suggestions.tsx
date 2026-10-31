@@ -4,7 +4,6 @@ import {
   Avatar,
   Box,
   Card,
-  Chip,
   IconButton,
   Skeleton,
   Tooltip,
@@ -90,7 +89,7 @@ export function Suggestions({ dense = false }: Props) {
         xl: 'repeat(5, 1fr)',
       };
   const cardPadding = dense ? 1.5 : 2;
-  const cardMinHeight = dense ? 110 : 132;
+  const cardMinHeight = dense ? 84 : 104;
 
   return (
     <Box>
@@ -200,31 +199,32 @@ export function Suggestions({ dense = false }: Props) {
                       </IconButton>
                     </Tooltip>
                   </Box>
+                  {/* Why it's suggested, in one quiet line — the domain
+                      only when the title isn't already the domain. Two
+                      pill chips per card were the loudest thing on it. */}
                   <Typography
                     sx={{
-                      fontSize: dense ? 11 : 12,
+                      fontSize: dense ? 12 : 12.5,
                       color: 'text.secondary',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
+                      mt: 'auto',
                     }}
                   >
-                    {c.domain}
+                    {[
+                      c.title && c.title !== c.domain ? c.domain : null,
+                      t(`reasons.${c.reason}`, { defaultValue: c.reason }),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                    {confidenceTier(c.score) === 'high' && (
+                      <Box component="span" sx={{ color: 'primary.main', fontWeight: 500 }}>
+                        {' · '}
+                        {t('confidence.high')}
+                      </Box>
+                    )}
                   </Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 'auto' }}>
-                    <Chip
-                      size="small"
-                      sx={{ height: dense ? 20 : 24, fontSize: dense ? 10 : 12 }}
-                      label={t(`reasons.${c.reason}`, { defaultValue: c.reason })}
-                    />
-                    <Chip
-                      size="small"
-                      sx={{ height: dense ? 20 : 24, fontSize: dense ? 10 : 12 }}
-                      label={t(`confidence.${confidenceTier(c.score)}`)}
-                      color={confidenceTier(c.score) === 'high' ? 'primary' : 'default'}
-                      variant={confidenceTier(c.score) === 'high' ? 'filled' : 'outlined'}
-                    />
-                  </Box>
                 </Card>
               ))
             : (
