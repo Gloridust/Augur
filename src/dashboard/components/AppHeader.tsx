@@ -1,6 +1,8 @@
 import { useTranslation } from 'react-i18next';
 import { AppBar, Box, IconButton, Toolbar, Tooltip, Typography } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
+import SpaIcon from '@mui/icons-material/Spa';
+import { setZen } from '../hooks/useZenMode';
 import { AugurMark } from './AugurMark';
 import { NavSearchBar } from './NavSearchBar';
 import { AiAssistant } from './AiAssistant';
@@ -65,8 +67,14 @@ export function AppHeader({ onOpenSettings }: Props) {
 
         {showAssistant && <AiAssistant />}
 
+        <Tooltip title={t('launcher.zenEnter')}>
+          <IconButton aria-label={t('launcher.zenEnter')} onClick={() => setZen(true)}>
+            <SpaIcon />
+          </IconButton>
+        </Tooltip>
+
         <Tooltip title={t('actions.settings')}>
-          <IconButton onClick={onOpenSettings}>
+          <IconButton aria-label={t('actions.settings')} onClick={onOpenSettings}>
             <SettingsIcon />
           </IconButton>
         </Tooltip>

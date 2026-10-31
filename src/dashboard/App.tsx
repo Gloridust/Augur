@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { Box, Container, Stack } from '@mui/material';
+import { useTranslation } from 'react-i18next';
+import { Box, Container, IconButton, Stack, Tooltip, Typography } from '@mui/material';
+import SettingsIcon from '@mui/icons-material/Settings';
+import SpaIcon from '@mui/icons-material/Spa';
+import { AugurMark } from './components/AugurMark';
+import { NavSearchBar } from './components/NavSearchBar';
+import { useZenMode } from './hooks/useZenMode';
 import { AppHeader } from './components/AppHeader';
 import { Greeting } from './components/Greeting';
 import { TabWall } from './components/TabWall';
@@ -16,6 +22,48 @@ import { Toaster } from './components/Toaster';
 
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [zen, setZen] = useZenMode();
+  const { t } = useTranslation();
+
+  if (zen) {
+    // Zen: the brand and the launcher, nothing else to glance at.
+    return (
+      <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default', display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5, p: { xs: 1, md: 2 } }}>
+          <Tooltip title={t('launcher.zenExit')}>
+            <IconButton aria-label={t('launcher.zenExit')} onClick={() => setZen(false)}>
+              <SpaIcon sx={{ color: 'primary.main' }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={t('actions.settings')}>
+            <IconButton aria-label={t('actions.settings')} onClick={() => setSettingsOpen(true)}>
+              <SettingsIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
+        <Stack
+          alignItems="center"
+          spacing={{ xs: 3, md: 4 }}
+          sx={{ flex: 1, justifyContent: 'center', px: 2, pb: '18vh' }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ color: 'text.primary' }}>
+            <Box sx={{ color: 'var(--mui-palette-primary-main)', display: 'flex' }}>
+              <AugurMark size={40} />
+            </Box>
+            <Typography
+              component="h1"
+              sx={{ fontFamily: '"Italiana", "Iowan Old Style", Georgia, serif', fontSize: { xs: 40, md: 52 }, lineHeight: 1, letterSpacing: '0.04em' }}
+            >
+              Augur
+            </Typography>
+          </Stack>
+          <NavSearchBar variant="hero" />
+        </Stack>
+        <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <Toaster />
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ minHeight: '100vh', backgroundColor: 'background.default' }}>

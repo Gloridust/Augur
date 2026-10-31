@@ -6,5 +6,8 @@
   "extDescription": {
     "message": "一个会预测的智能新标签页：知道你接下来要打开什么，提示你该清理什么。",
     "description": "扩展简介。"
+  },
+  "cmdOpenLauncher": {
+    "message": "搜索已打开的标签、历史记录和网页"
   }
 }

@@ -63,6 +63,7 @@ export type EventType =
   | 'smart_cleanup_shown'
   | 'smart_cleanup_committed'
   | 'export_failed'
+  | 'launcher_opened'
   | 'search_executed'
   | 'tab_filter_typed';
 

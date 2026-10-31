@@ -435,5 +435,28 @@
   },
   "common": {
     "cancel": "取消"
+  },
+  "launcher": {
+    "placeholder": "搜索标签页、历史记录或网页",
+    "scopePlaceholder": "在 {{site}} 中搜索",
+    "clear": "清空",
+    "switch": "切换到此标签",
+    "open": "打开",
+    "go": "前往",
+    "searchOn": "用 {{engine}} 搜索",
+    "siteHint": "在 {{site}} 中搜索",
+    "zenOn": "开启 Zen 模式",
+    "zenOff": "关闭 Zen 模式",
+    "footerOpen": "打开",
+    "footerSite": "站内搜索",
+    "section": {
+      "tab": "已打开的标签",
+      "pin": "置顶",
+      "history": "历史记录",
+      "recent": "最近搜索",
+      "suggest": "搜索建议"
+    },
+    "zenExit": "退出 Zen 模式",
+    "zenEnter": "Zen 模式"
   }
 }

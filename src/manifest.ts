@@ -27,6 +27,14 @@ export default defineManifest({
   // add a permission here, add a corresponding justification block to
   // doc/RELEASE.md §7 — CWS will ask, and reviewers reject unjustified
   // permission requests.
+  // Global shortcut: open the launcher (tabs, history, web) from any page.
+  // Users can rebind it at chrome://extensions/shortcuts.
+  commands: {
+    'open-launcher': {
+      suggested_key: { default: 'Ctrl+Shift+K', mac: 'Command+Shift+K' },
+      description: '__MSG_cmdOpenLauncher__',
+    },
+  },
   permissions: [
     'tabs',
     'tabGroups',

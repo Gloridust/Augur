@@ -575,6 +575,23 @@ registerMessaging();
 // the new tab). If a dashboard tab already exists, focus it; if it was
 // opened via Cmd+T (with the strip), reload it via direct URL to drop the
 // strip.
+// Global launcher shortcut: a dashboard tab in the current window with the
+// search focused (#launcher). The tab is opened next to the current one, so
+// switching to a found tab and closing this one leaves the user where they
+// were.
+chrome.commands?.onCommand.addListener((command) => {
+  if (command !== 'open-launcher') return;
+  void (async () => {
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL('src/dashboard/index.html#launcher'),
+      active: true,
+      index: active?.index !== undefined ? active.index + 1 : undefined,
+      windowId: active?.windowId,
+    });
+  })().catch((err) => void logError('commands.open-launcher', err));
+});
+
 chrome.action.onClicked.addListener(async () => {
   const dashboardUrl = chrome.runtime.getURL('src/dashboard/index.html');
   const allTabs = await chrome.tabs.query({});

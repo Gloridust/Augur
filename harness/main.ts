@@ -19,6 +19,11 @@ chrome.tabs.query = (q: Record<string, unknown>, cb?: (t: unknown[]) => void) =>
   return p;
 };
 chrome.storage.onChanged = new ChromeEvent();
+chrome.history.search = async () => [
+  { url: 'https://github.com/TanStack/table', title: 'TanStack/table: Headless UI for building tables', visitCount: 12, lastVisitTime: Date.now() - 2 * 3.6e6 },
+  { url: 'https://www.zhihu.com/question/1', title: '如何系统地学习前端性能优化？ - 知乎', visitCount: 3, lastVisitTime: Date.now() - 30 * 3.6e6 },
+  { url: 'https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream', title: 'CompressionStream - Web APIs | MDN', visitCount: 5, lastVisitTime: Date.now() - 5 * 3.6e6 },
+];
 
 const HOUR = 3_600_000;
 const now = Date.now();
@@ -32,6 +37,7 @@ const open: Array<[number, number, string, string, number]> = [
   [5, 2, 'https://news.ycombinator.com/', 'Hacker News', 50],
   [6, 2, 'https://www.youtube.com/watch?v=x', 'Some talk — YouTube', 200],
   [7, 2, 'https://en.wikipedia.org/wiki/Bayes', "Bayes' theorem — Wikipedia", 400],
+  [8, 2, 'https://feishu.cn/docx/weekly', '工作周报 - 飞书云文档', 3],
 ];
 for (const [id, windowId, url, title, h] of open) {
   tabs.set(id, { id, windowId, url, title, active: id === 1 || id === 5, lastAccessed: now - h * HOUR, index: id });

@@ -6,5 +6,8 @@
   "extDescription": {
     "message": "A learning new-tab dashboard that anticipates what you need and clears what you don't.",
     "description": "Extension description."
+  },
+  "cmdOpenLauncher": {
+    "message": "Search open tabs, history and the web"
   }
 }
